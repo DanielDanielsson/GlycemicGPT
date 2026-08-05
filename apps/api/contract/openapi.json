@@ -10501,6 +10501,10 @@
             ],
             "title": "Bot Username"
           },
+          "can_manage": {
+            "title": "Can Manage",
+            "type": "boolean"
+          },
           "configured": {
             "title": "Configured",
             "type": "boolean"
@@ -10519,7 +10523,8 @@
           }
         },
         "required": [
-          "configured"
+          "configured",
+          "can_manage"
         ],
         "title": "TelegramBotConfigResponse",
         "type": "object"

@@ -34,6 +34,7 @@ CODE_ALPHABET = string.ascii_uppercase.replace("O", "").replace("I", "") + "2345
 
 # Module-level state for polling offset (single-process)
 _last_update_offset: int | None = None
+_bot_token_for_update_offset: str | None = None
 
 # Cached bot info
 _bot_username: str | None = None
@@ -157,11 +158,15 @@ async def send_message(
 async def get_updates(
     offset: int | None = None,
     db: AsyncSession | None = None,
+    *,
+    token: str | None = None,
 ) -> list[dict[str, Any]]:
     """Get updates from Telegram using long polling.
 
     Args:
         offset: Offset for the next batch of updates.
+        db: Database session used to load a persisted bot token.
+        token: Already resolved bot token for callers that manage polling state.
 
     Returns:
         List of update objects from Telegram.
@@ -169,7 +174,8 @@ async def get_updates(
     Raises:
         TelegramBotError: If the API call fails.
     """
-    token = await get_telegram_bot_token(db)
+    if token is None:
+        token = await get_telegram_bot_token(db)
     if not token:
         raise TelegramBotError("Telegram bot token is not configured")
 
@@ -371,9 +377,17 @@ async def poll_and_handle_messages(db: AsyncSession) -> int:
     # (telegram_commands -> alert_notifier -> telegram_bot)
     from src.services.telegram_commands import handle_command
 
-    global _last_update_offset
+    global _bot_token_for_update_offset, _last_update_offset
 
-    updates = await get_updates(_last_update_offset, db)
+    token = await get_telegram_bot_token(db)
+    if not token:
+        raise TelegramBotError("Telegram bot token is not configured")
+
+    if token != _bot_token_for_update_offset:
+        _last_update_offset = None
+        _bot_token_for_update_offset = token
+
+    updates = await get_updates(_last_update_offset, db, token=token)
 
     if not updates:
         return 0
@@ -519,8 +533,10 @@ async def unlink_telegram(
 
 
 def reset_bot_cache() -> None:
-    """Reset cached bot info. Used for testing."""
-    global _bot_token_for_cached_username, _bot_username, _last_update_offset
+    """Reset cached bot metadata and process-local polling state."""
+    global _bot_token_for_cached_username, _bot_token_for_update_offset
+    global _bot_username, _last_update_offset
     _bot_username = None
     _bot_token_for_cached_username = None
+    _bot_token_for_update_offset = None
     _last_update_offset = None

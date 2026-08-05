@@ -8,13 +8,13 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 
 from src.database import get_session_maker
 from src.models.telegram_bot_config import TelegramBotConfig
 from src.models.telegram_link import TelegramLink
 from src.models.telegram_verification import TelegramVerificationCode
-from src.models.user import User
+from src.models.user import User, UserRole
 from src.services.telegram_bot import (
     CODE_ALPHABET,
     CODE_LENGTH,
@@ -46,6 +46,32 @@ async def register_and_login(client, email="tg@example.com", password="Test1234!
         json={"email": email, "password": password},
     )
     cookie_value = resp.cookies.get(app_settings.jwt_cookie_name)
+    return {app_settings.jwt_cookie_name: cookie_value}
+
+
+async def register_admin_and_login(
+    client,
+    email="tg-admin@example.com",
+    password="Test1234!",
+):
+    """Register an administrator and return auth cookies as a dict."""
+    await client.post(
+        "/api/auth/register",
+        json={"email": email, "password": password},
+    )
+    async with get_session_maker()() as db:
+        await db.execute(
+            update(User).where(User.email == email).values(role=UserRole.ADMIN)
+        )
+        await db.commit()
+
+    from src.config import settings as app_settings
+
+    response = await client.post(
+        "/api/auth/login",
+        json={"email": email, "password": password},
+    )
+    cookie_value = response.cookies.get(app_settings.jwt_cookie_name)
     return {app_settings.jwt_cookie_name: cookie_value}
 
 
@@ -447,7 +473,7 @@ class TestTelegramEndpoints:
     ):
         """The web token setup flow must have a persistent API contract."""
         mock_bot_info.return_value = "ConfiguredBot"
-        cookies = await register_and_login(client, "tg_config@example.com")
+        cookies = await register_admin_and_login(client, "tg_config@example.com")
 
         save_resp = await client.post(
             "/api/telegram/bot-config",
@@ -463,6 +489,7 @@ class TestTelegramEndpoints:
         get_resp = await client.get("/api/telegram/bot-config", cookies=cookies)
         assert get_resp.status_code == 200
         assert get_resp.json()["configured"] is True
+        assert get_resp.json()["can_manage"] is True
         assert get_resp.json()["bot_username"] == "ConfiguredBot"
         assert get_resp.json()["configured_at"] is not None
 
@@ -479,9 +506,68 @@ class TestTelegramEndpoints:
         assert get_after_delete.status_code == 200
         assert get_after_delete.json() == {
             "configured": False,
+            "can_manage": True,
             "bot_username": None,
             "configured_at": None,
         }
+
+    @pytest.mark.asyncio
+    async def test_bot_config_mutations_require_admin(self, client):
+        """Normal authenticated users cannot change deployment credentials."""
+        cookies = await register_and_login(client, "tg_non_admin@example.com")
+
+        get_response = await client.get("/api/telegram/bot-config", cookies=cookies)
+        save_response = await client.post(
+            "/api/telegram/bot-config",
+            json={"token": "123456789:test-token"},
+            cookies=cookies,
+        )
+        delete_response = await client.delete(
+            "/api/telegram/bot-config",
+            cookies=cookies,
+        )
+
+        assert get_response.status_code == 200
+        assert get_response.json()["can_manage"] is False
+        assert save_response.status_code == 403
+        assert delete_response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_bot_config_mutations_require_authentication(self, client):
+        """Anonymous callers cannot change deployment credentials."""
+        save_response = await client.post(
+            "/api/telegram/bot-config",
+            json={"token": "123456789:test-token"},
+        )
+        delete_response = await client.delete("/api/telegram/bot-config")
+
+        assert save_response.status_code == 401
+        assert delete_response.status_code == 401
+
+    @pytest.mark.asyncio
+    @patch("src.routers.telegram.reset_bot_cache")
+    @patch("src.routers.telegram.get_bot_info", new_callable=AsyncMock)
+    async def test_rejected_bot_token_preserves_active_polling_state(
+        self,
+        mock_bot_info,
+        mock_reset_bot_cache,
+        client,
+    ):
+        """Rejected candidate tokens must not reset the active bot poller."""
+        mock_bot_info.side_effect = TelegramBotError("invalid token")
+        cookies = await register_admin_and_login(
+            client,
+            "tg_invalid_config@example.com",
+        )
+
+        response = await client.post(
+            "/api/telegram/bot-config",
+            json={"token": "invalid-token"},
+            cookies=cookies,
+        )
+
+        assert response.status_code == 400
+        mock_reset_bot_cache.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_status_unauthenticated_returns_401(self, client):

@@ -16,6 +16,7 @@ class TelegramBotConfigResponse(BaseModel):
     """Safe Telegram bot configuration metadata."""
 
     configured: bool
+    can_manage: bool
     bot_username: str | None = None
     configured_at: datetime | None = None
 

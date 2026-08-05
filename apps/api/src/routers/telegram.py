@@ -9,11 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.core.auth import get_current_user
+from src.core.auth import AdminUser, get_current_user
 from src.core.encryption import encrypt_credential
 from src.database import get_db
 from src.models.telegram_bot_config import TelegramBotConfig
-from src.models.user import User
+from src.models.user import User, UserRole
 from src.schemas.telegram import (
     TelegramBotConfigRequest,
     TelegramBotConfigResponse,
@@ -61,20 +61,25 @@ async def _check_bot_configured(db: AsyncSession) -> None:
     response_model=TelegramBotConfigResponse,
 )
 async def get_bot_config(
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> TelegramBotConfigResponse:
     """Return safe metadata about the shared Telegram bot configuration."""
+    can_manage = user.role == UserRole.ADMIN
     config = await db.get(TelegramBotConfig, 1)
     if config is not None:
         return TelegramBotConfigResponse(
             configured=True,
+            can_manage=can_manage,
             bot_username=config.bot_username,
             configured_at=config.configured_at,
         )
 
     if not settings.telegram_bot_token:
-        return TelegramBotConfigResponse(configured=False)
+        return TelegramBotConfigResponse(
+            configured=False,
+            can_manage=can_manage,
+        )
 
     try:
         bot_username = await get_bot_info(db)
@@ -86,6 +91,7 @@ async def get_bot_config(
 
     return TelegramBotConfigResponse(
         configured=True,
+        can_manage=can_manage,
         bot_username=bot_username,
     )
 
@@ -96,7 +102,7 @@ async def get_bot_config(
 )
 async def save_bot_config(
     request: TelegramBotConfigRequest,
-    _user: User = Depends(get_current_user),
+    _user: AdminUser,
     db: AsyncSession = Depends(get_db),
 ) -> TelegramBotValidateResponse:
     """Validate a Telegram bot token before storing it encrypted."""
@@ -107,7 +113,6 @@ async def save_bot_config(
             detail="Telegram bot token is required",
         )
 
-    reset_bot_cache()
     try:
         bot_username = await get_bot_info(token=token)
     except TelegramBotError:
@@ -132,6 +137,7 @@ async def save_bot_config(
         config.configured_at = configured_at
 
     await db.commit()
+    reset_bot_cache()
     return TelegramBotValidateResponse(valid=True, bot_username=bot_username)
 
 
@@ -140,7 +146,7 @@ async def save_bot_config(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_bot_config(
-    _user: User = Depends(get_current_user),
+    _user: AdminUser,
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Remove a database-managed Telegram bot token."""
