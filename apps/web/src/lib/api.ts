@@ -796,6 +796,7 @@ export interface TelegramTestMessageResponse {
  */
 export interface TelegramBotConfigResponse {
   configured: boolean;
+  can_manage: boolean;
   bot_username: string | null;
   configured_at: string | null;
 }
