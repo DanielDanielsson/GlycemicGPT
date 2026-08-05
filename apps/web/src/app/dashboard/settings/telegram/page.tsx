@@ -107,12 +107,14 @@ export default function TelegramSettingsPage() {
       }
     } catch (err) {
       const is401 = err instanceof Error && err.message.includes("401");
-      const is503 = err instanceof Error && err.message.includes("503");
-      if (!is401 && !is503) {
+      const isBotNotConfigured =
+        err instanceof Error &&
+        (err.message.includes("Telegram bot is not configured") ||
+          err.message.includes("503"));
+      if (!is401 && !isBotNotConfigured) {
         setIsOffline(true);
       }
-      // 503 means bot not configured - not an offline state
-      if (is503) {
+      if (isBotNotConfigured) {
         setIsOffline(false);
       }
       if (pageState === "loading") {

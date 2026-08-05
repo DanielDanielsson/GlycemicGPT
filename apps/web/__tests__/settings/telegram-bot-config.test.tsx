@@ -184,6 +184,25 @@ describe("Story 12.3: Telegram Bot Token Configuration", () => {
       ).toBeEnabled();
     });
 
+    it("does not disable token setup when the bot is simply unconfigured", async () => {
+      mockGetTelegramStatus.mockRejectedValue(
+        new Error("Telegram bot is not configured")
+      );
+
+      render(<TelegramSettingsPage />);
+
+      const input = await screen.findByPlaceholderText(
+        /ABCdefGhIJKlmNoPQRsTUVwxyz/i
+      );
+
+      expect(input).toBeEnabled();
+      expect(
+        screen.queryByText(
+          "Unable to connect to server. Telegram settings are unavailable."
+        )
+      ).not.toBeInTheDocument();
+    });
+
     it("shows bot not configured warning", async () => {
       render(<TelegramSettingsPage />);
 
