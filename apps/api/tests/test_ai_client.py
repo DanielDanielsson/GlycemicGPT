@@ -602,6 +602,30 @@ class TestAIClientFactory:
         assert exc_info.value.status_code == 404
         assert "No AI provider configured" in exc_info.value.detail
 
+    async def test_factory_rejects_direct_provider_without_stored_key(self):
+        """A corrupt direct provider must not use the sidecar placeholder."""
+        from fastapi import HTTPException
+
+        from src.services.ai_client import get_ai_client
+
+        mock_user = SimpleNamespace(id=uuid.uuid4())
+        mock_config = SimpleNamespace(
+            provider_type=AIProviderType.CLAUDE_API,
+            encrypted_api_key=None,
+            model_name=None,
+            base_url=None,
+        )
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_config
+        mock_db.execute.return_value = mock_result
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_ai_client(mock_user, mock_db)
+
+        assert exc_info.value.status_code == 409
+        assert "missing its API key" in exc_info.value.detail
+
     async def test_factory_uses_custom_model_name(self):
         """Test factory uses model_name from config when set."""
         from src.services.ai_client import get_ai_client

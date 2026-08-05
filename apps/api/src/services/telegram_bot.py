@@ -8,6 +8,7 @@ import secrets
 import string
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import httpx
 from sqlalchemy import delete, select
@@ -15,7 +16,9 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
+from src.core.encryption import decrypt_credential
 from src.logging_config import get_logger
+from src.models.telegram_bot_config import TelegramBotConfig
 from src.models.telegram_link import TelegramLink
 from src.models.telegram_verification import TelegramVerificationCode
 
@@ -31,21 +34,45 @@ CODE_ALPHABET = string.ascii_uppercase.replace("O", "").replace("I", "") + "2345
 
 # Module-level state for polling offset (single-process)
 _last_update_offset: int | None = None
+_bot_token_for_update_offset: str | None = None
 
 # Cached bot info
 _bot_username: str | None = None
+_bot_token_for_cached_username: str | None = None
 
 
 class TelegramBotError(Exception):
     """Error communicating with the Telegram Bot API."""
 
 
-def _get_api_url(method: str) -> str:
+def _get_api_url(token: str, method: str) -> str:
     """Build Telegram Bot API URL for a given method."""
-    return f"{TELEGRAM_API_BASE}{settings.telegram_bot_token}/{method}"
+    return f"{TELEGRAM_API_BASE}{token}/{method}"
 
 
-async def get_bot_info() -> str:
+async def get_telegram_bot_token(db: AsyncSession | None = None) -> str:
+    """Return the decrypted database token, falling back to the environment."""
+    if db is not None:
+        result = await db.execute(
+            select(TelegramBotConfig).where(TelegramBotConfig.id == 1)
+        )
+        config = result.scalar_one_or_none()
+        if config is not None:
+            try:
+                return decrypt_credential(config.encrypted_token)
+            except ValueError as exc:
+                raise TelegramBotError(
+                    "Stored Telegram bot token could not be decrypted"
+                ) from exc
+
+    return settings.telegram_bot_token
+
+
+async def get_bot_info(
+    db: AsyncSession | None = None,
+    *,
+    token: str | None = None,
+) -> str:
     """Get the bot's username by calling Telegram getMe.
 
     Returns:
@@ -54,16 +81,18 @@ async def get_bot_info() -> str:
     Raises:
         TelegramBotError: If the bot token is invalid or API call fails.
     """
-    global _bot_username
+    global _bot_token_for_cached_username, _bot_username
 
-    if _bot_username is not None:
+    effective_token = token or await get_telegram_bot_token(db)
+
+    if _bot_username is not None and _bot_token_for_cached_username == effective_token:
         return _bot_username
 
-    if not settings.telegram_bot_token:
+    if not effective_token:
         raise TelegramBotError("Telegram bot token is not configured")
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.get(_get_api_url("getMe"))
+        response = await client.get(_get_api_url(effective_token, "getMe"))
 
     if response.status_code != 200:
         raise TelegramBotError(
@@ -77,10 +106,15 @@ async def get_bot_info() -> str:
         )
 
     _bot_username = data["result"]["username"]
+    _bot_token_for_cached_username = effective_token
     return _bot_username
 
 
-async def send_message(chat_id: int, text: str) -> bool:
+async def send_message(
+    chat_id: int,
+    text: str,
+    db: AsyncSession | None = None,
+) -> bool:
     """Send a message to a Telegram chat.
 
     Args:
@@ -93,12 +127,13 @@ async def send_message(chat_id: int, text: str) -> bool:
     Raises:
         TelegramBotError: If the API call fails.
     """
-    if not settings.telegram_bot_token:
+    token = await get_telegram_bot_token(db)
+    if not token:
         raise TelegramBotError("Telegram bot token is not configured")
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post(
-            _get_api_url("sendMessage"),
+            _get_api_url(token, "sendMessage"),
             json={
                 "chat_id": chat_id,
                 "text": text,
@@ -120,11 +155,18 @@ async def send_message(chat_id: int, text: str) -> bool:
     return True
 
 
-async def get_updates(offset: int | None = None) -> list[dict]:
+async def get_updates(
+    offset: int | None = None,
+    db: AsyncSession | None = None,
+    *,
+    token: str | None = None,
+) -> list[dict[str, Any]]:
     """Get updates from Telegram using long polling.
 
     Args:
         offset: Offset for the next batch of updates.
+        db: Database session used to load a persisted bot token.
+        token: Already resolved bot token for callers that manage polling state.
 
     Returns:
         List of update objects from Telegram.
@@ -132,16 +174,21 @@ async def get_updates(offset: int | None = None) -> list[dict]:
     Raises:
         TelegramBotError: If the API call fails.
     """
-    if not settings.telegram_bot_token:
+    if token is None:
+        token = await get_telegram_bot_token(db)
+    if not token:
         raise TelegramBotError("Telegram bot token is not configured")
 
-    params: dict = {"timeout": 1, "allowed_updates": '["message"]'}
+    params: dict[str, str | int] = {
+        "timeout": 1,
+        "allowed_updates": '["message"]',
+    }
     if offset is not None:
         params["offset"] = offset
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.get(
-            _get_api_url("getUpdates"),
+            _get_api_url(token, "getUpdates"),
             params=params,
         )
 
@@ -150,13 +197,13 @@ async def get_updates(offset: int | None = None) -> list[dict]:
             f"Failed to get updates: {response.status_code} {response.text}"
         )
 
-    data = response.json()
+    data: dict[str, object] = response.json()
     if not data.get("ok"):
         raise TelegramBotError(
             f"Get updates failed: {data.get('description', 'Unknown')}"
         )
 
-    return data.get("result", [])
+    return cast(list[dict[str, Any]], data.get("result", []))
 
 
 def _generate_code() -> str:
@@ -303,6 +350,7 @@ async def verify_telegram_link(
             chat_id,
             "Your Telegram account has been linked to GlycemicGPT! "
             "You will now receive glucose alerts and notifications here.",
+            db,
         )
     except TelegramBotError:
         logger.warning(
@@ -329,9 +377,17 @@ async def poll_and_handle_messages(db: AsyncSession) -> int:
     # (telegram_commands -> alert_notifier -> telegram_bot)
     from src.services.telegram_commands import handle_command
 
-    global _last_update_offset
+    global _bot_token_for_update_offset, _last_update_offset
 
-    updates = await get_updates(_last_update_offset)
+    token = await get_telegram_bot_token(db)
+    if not token:
+        raise TelegramBotError("Telegram bot token is not configured")
+
+    if token != _bot_token_for_update_offset:
+        _last_update_offset = None
+        _bot_token_for_update_offset = token
+
+    updates = await get_updates(_last_update_offset, db, token=token)
 
     if not updates:
         return 0
@@ -367,6 +423,7 @@ async def poll_and_handle_messages(db: AsyncSession) -> int:
                             chat_id,
                             "Invalid or expired verification code. "
                             "Please generate a new code from the GlycemicGPT web app.",
+                            db,
                         )
                     except TelegramBotError:
                         pass
@@ -377,6 +434,7 @@ async def poll_and_handle_messages(db: AsyncSession) -> int:
                     "Welcome to GlycemicGPT! To link your account, "
                     "please generate a verification code from the web app "
                     "and send: /start YOUR_CODE",
+                    db,
                 )
             except TelegramBotError:
                 pass
@@ -384,7 +442,7 @@ async def poll_and_handle_messages(db: AsyncSession) -> int:
             # Story 7.4: Route all other messages to command handlers
             try:
                 response = await handle_command(db, chat_id, text)
-                await send_message(chat_id, response)
+                await send_message(chat_id, response, db)
                 processed += 1
             except TelegramBotError:
                 logger.warning(
@@ -466,6 +524,7 @@ async def unlink_telegram(
             chat_id,
             "Your Telegram account has been unlinked from GlycemicGPT. "
             "You will no longer receive notifications here.",
+            db,
         )
     except TelegramBotError:
         pass
@@ -474,7 +533,10 @@ async def unlink_telegram(
 
 
 def reset_bot_cache() -> None:
-    """Reset cached bot info. Used for testing."""
+    """Reset cached bot metadata and process-local polling state."""
+    global _bot_token_for_cached_username, _bot_token_for_update_offset
     global _bot_username, _last_update_offset
     _bot_username = None
+    _bot_token_for_cached_username = None
+    _bot_token_for_update_offset = None
     _last_update_offset = None

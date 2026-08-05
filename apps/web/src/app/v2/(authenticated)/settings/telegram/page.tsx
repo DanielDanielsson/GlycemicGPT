@@ -46,11 +46,13 @@ export default function TelegramSettingsPage() {
   const [showToken, setShowToken] = useState(false);
   const [botActionLoading, setBotActionLoading] = useState(false);
   const [confirmRemoveBot, setConfirmRemoveBot] = useState(false);
+  const [botConfigError, setBotConfigError] = useState<string | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const botConfigured = botConfig?.configured === true;
+  const canManageBot = botConfig?.can_manage === true;
 
   const clearTimers = useCallback(() => {
     if (pollRef.current) {
@@ -64,17 +66,13 @@ export default function TelegramSettingsPage() {
   }, []);
 
   const fetchBotConfig = useCallback(async () => {
+    setBotConfigError(null);
     try {
       const data = await getTelegramBotConfig();
       setBotConfig(data);
       return data;
     } catch {
-      // If bot-config endpoint fails, treat as not configured
-      setBotConfig({
-        configured: false,
-        bot_username: null,
-        configured_at: null,
-      });
+      setBotConfigError("Unable to load Telegram bot configuration.");
       return null;
     }
   }, []);
@@ -92,12 +90,14 @@ export default function TelegramSettingsPage() {
       }
     } catch (err) {
       const is401 = err instanceof Error && err.message.includes("401");
-      const is503 = err instanceof Error && err.message.includes("503");
-      if (!is401 && !is503) {
+      const isBotNotConfigured =
+        err instanceof Error &&
+        (err.message.includes("Telegram bot is not configured") ||
+          err.message.includes("503"));
+      if (!is401 && !isBotNotConfigured) {
         setIsOffline(true);
       }
-      // 503 means bot not configured - not an offline state
-      if (is503) {
+      if (isBotNotConfigured) {
         setIsOffline(false);
       }
       if (pageState === "loading") {
@@ -130,8 +130,10 @@ export default function TelegramSettingsPage() {
     try {
       const result = await saveTelegramBotToken(botToken.trim());
       if (result.valid) {
+        setBotConfigError(null);
         setBotConfig({
           configured: true,
+          can_manage: true,
           bot_username: result.bot_username,
           configured_at: new Date().toISOString(),
         });
@@ -160,8 +162,10 @@ export default function TelegramSettingsPage() {
 
     try {
       await removeTelegramBotToken();
+      setBotConfigError(null);
       setBotConfig({
         configured: false,
+        can_manage: true,
         bot_username: null,
         configured_at: null,
       });
@@ -363,7 +367,29 @@ export default function TelegramSettingsPage() {
           )}
         </div>
 
-        {botConfigured ? (
+        {botConfigError && (
+          <div
+            role="alert"
+            className="flex items-center justify-between gap-4 rounded-panel border border-signal-error-text bg-signal-error-fill/10 px-4 py-3 font_body_2 text-signal-error-text"
+          >
+            <p>{botConfigError}</p>
+            <Button
+              type="button"
+              onClick={() => void fetchBotConfig()}
+              className="font_ui_label underline"
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+
+        {botConfig === null ? (
+          !botConfigError && (
+            <p className="text-foreground-secondary font_body_2">
+              Loading bot configuration...
+            </p>
+          )
+        ) : botConfigured ? (
           /* Bot is configured - show status */
           <div className="space-y-4">
             <div className="bg-surface-secondary rounded-panel p-4 space-y-2">
@@ -386,7 +412,7 @@ export default function TelegramSettingsPage() {
             </div>
 
             {/* Remove bot token */}
-            {!confirmRemoveBot ? (
+            {canManageBot && (!confirmRemoveBot ? (
               <Button
                 onClick={() => setConfirmRemoveBot(true)}
                 disabled={isOffline || botActionLoading}
@@ -431,9 +457,9 @@ export default function TelegramSettingsPage() {
                   </Button>
                 </div>
               </div>
-            )}
+            ))}
           </div>
-        ) : (
+        ) : canManageBot ? (
           /* Bot is NOT configured - show setup form */
           <div className="space-y-4">
             <p className="text-foreground-secondary font_body_2">
@@ -528,6 +554,11 @@ export default function TelegramSettingsPage() {
               Validate Token
             </Button>
           </div>
+        ) : (
+          <p className="text-foreground-secondary font_body_2">
+            Telegram is not configured. An administrator must configure the bot
+            token before accounts can be linked.
+          </p>
         )}
       </div>
 
@@ -544,7 +575,7 @@ export default function TelegramSettingsPage() {
       )}
 
       {/* Bot not configured warning */}
-      {!botConfigured && pageState !== "loading" && (
+      {botConfig !== null && !botConfigured && pageState !== "loading" && (
         <div className="bg-signal-warning-fill/10 border border-signal-warning-text rounded-panel px-4 py-3 font_body_2 text-signal-warning-text">
           Telegram bot not configured. An administrator must set up the bot
           token first before accounts can be linked.

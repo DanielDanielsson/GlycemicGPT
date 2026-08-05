@@ -10471,6 +10471,83 @@
         "title": "TargetGlucoseRangeUpdate",
         "type": "object"
       },
+      "TelegramBotConfigRequest": {
+        "description": "Token submitted for validation and encrypted persistence.",
+        "properties": {
+          "token": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "TelegramBotConfigRequest",
+        "type": "object"
+      },
+      "TelegramBotConfigResponse": {
+        "description": "Safe Telegram bot configuration metadata.",
+        "properties": {
+          "bot_username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bot Username"
+          },
+          "can_manage": {
+            "title": "Can Manage",
+            "type": "boolean"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "configured_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configured At"
+          }
+        },
+        "required": [
+          "configured",
+          "can_manage"
+        ],
+        "title": "TelegramBotConfigResponse",
+        "type": "object"
+      },
+      "TelegramBotValidateResponse": {
+        "description": "Successful Telegram token validation response.",
+        "properties": {
+          "bot_username": {
+            "title": "Bot Username",
+            "type": "string"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid",
+          "bot_username"
+        ],
+        "title": "TelegramBotValidateResponse",
+        "type": "object"
+      },
       "TelegramLinkResponse": {
         "description": "Response schema for an existing Telegram link.",
         "properties": {
@@ -11323,7 +11400,7 @@
     "description": "AI-powered diabetes management API",
     "title": "GlycemicGPT API",
     "version": "0.1.0",
-    "x-contract-version": "2"
+    "x-contract-version": "3"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -24454,6 +24531,155 @@
         "summary": "Get System Stats",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/api/telegram/bot-config": {
+      "delete": {
+        "description": "Remove a database-managed Telegram bot token.",
+        "operationId": "delete_bot_config_api_telegram_bot_config_delete",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "glycemicgpt_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Glycemicgpt Session"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Bot Config",
+        "tags": [
+          "telegram"
+        ]
+      },
+      "get": {
+        "description": "Return safe metadata about the shared Telegram bot configuration.",
+        "operationId": "get_bot_config_api_telegram_bot_config_get",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "glycemicgpt_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Glycemicgpt Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramBotConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Bot Config",
+        "tags": [
+          "telegram"
+        ]
+      },
+      "post": {
+        "description": "Validate a Telegram bot token before storing it encrypted.",
+        "operationId": "save_bot_config_api_telegram_bot_config_post",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "glycemicgpt_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Glycemicgpt Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TelegramBotConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramBotValidateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Bot Config",
+        "tags": [
+          "telegram"
         ]
       }
     },

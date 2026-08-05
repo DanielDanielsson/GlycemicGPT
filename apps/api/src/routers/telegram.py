@@ -3,14 +3,21 @@
 Endpoints for linking/unlinking a Telegram account and sending test messages.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.core.auth import get_current_user
+from src.core.auth import AdminUser, get_current_user
+from src.core.encryption import encrypt_credential
 from src.database import get_db
-from src.models.user import User
+from src.models.telegram_bot_config import TelegramBotConfig
+from src.models.user import User, UserRole
 from src.schemas.telegram import (
+    TelegramBotConfigRequest,
+    TelegramBotConfigResponse,
+    TelegramBotValidateResponse,
     TelegramLinkResponse,
     TelegramStatusResponse,
     TelegramTestMessageResponse,
@@ -21,7 +28,9 @@ from src.services.telegram_bot import (
     TelegramBotError,
     generate_verification_code,
     get_bot_info,
+    get_telegram_bot_token,
     get_telegram_link,
+    reset_bot_cache,
     send_message,
     unlink_telegram,
 )
@@ -32,13 +41,130 @@ router = APIRouter(
 )
 
 
-def _check_bot_configured() -> None:
+async def _check_bot_configured(db: AsyncSession) -> None:
     """Raise 503 if the Telegram bot token is not configured."""
-    if not settings.telegram_bot_token:
+    if settings.telegram_bot_token:
+        return
+    try:
+        token = await get_telegram_bot_token(db)
+    except TelegramBotError:
+        token = ""
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Telegram bot is not configured",
         )
+
+
+@router.get(
+    "/bot-config",
+    response_model=TelegramBotConfigResponse,
+)
+async def get_bot_config(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TelegramBotConfigResponse:
+    """Return safe metadata about the shared Telegram bot configuration."""
+    can_manage = user.role == UserRole.ADMIN
+    config = await db.get(TelegramBotConfig, 1)
+    if config is not None:
+        return TelegramBotConfigResponse(
+            configured=True,
+            can_manage=can_manage,
+            bot_username=config.bot_username,
+            configured_at=config.configured_at,
+        )
+
+    if not settings.telegram_bot_token:
+        return TelegramBotConfigResponse(
+            configured=False,
+            can_manage=can_manage,
+        )
+
+    try:
+        bot_username = await get_bot_info(db)
+    except TelegramBotError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Telegram bot is temporarily unavailable",
+        )
+
+    return TelegramBotConfigResponse(
+        configured=True,
+        can_manage=can_manage,
+        bot_username=bot_username,
+    )
+
+
+@router.post(
+    "/bot-config",
+    response_model=TelegramBotValidateResponse,
+)
+async def save_bot_config(
+    request: TelegramBotConfigRequest,
+    _user: AdminUser,
+    db: AsyncSession = Depends(get_db),
+) -> TelegramBotValidateResponse:
+    """Validate a Telegram bot token before storing it encrypted."""
+    token = request.token.strip()
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Telegram bot token is required",
+        )
+
+    try:
+        bot_username = await get_bot_info(token=token)
+    except TelegramBotError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Telegram rejected the bot token",
+        )
+
+    config = await db.get(TelegramBotConfig, 1)
+    configured_at = datetime.now(UTC)
+    if config is None:
+        config = TelegramBotConfig(
+            id=1,
+            encrypted_token=encrypt_credential(token),
+            bot_username=bot_username,
+            configured_at=configured_at,
+        )
+        db.add(config)
+    else:
+        config.encrypted_token = encrypt_credential(token)
+        config.bot_username = bot_username
+        config.configured_at = configured_at
+
+    await db.commit()
+    reset_bot_cache()
+    return TelegramBotValidateResponse(valid=True, bot_username=bot_username)
+
+
+@router.delete(
+    "/bot-config",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_bot_config(
+    _user: AdminUser,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Remove a database-managed Telegram bot token."""
+    config = await db.get(TelegramBotConfig, 1)
+    if config is not None:
+        await db.delete(config)
+        await db.commit()
+        reset_bot_cache()
+    elif settings.telegram_bot_token:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Telegram is configured through TELEGRAM_BOT_TOKEN and must "
+                "be removed from the server environment"
+            ),
+        )
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
@@ -54,10 +180,10 @@ async def get_telegram_status(
     Returns whether the user has linked their Telegram account
     and the bot's username for linking instructions.
     """
-    _check_bot_configured()
+    await _check_bot_configured(db)
 
     try:
-        bot_username = await get_bot_info()
+        bot_username = await get_bot_info(db)
     except TelegramBotError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -97,7 +223,7 @@ async def start_telegram_link(
     The user should send /start <code> to the bot on Telegram
     to complete the linking process.
     """
-    _check_bot_configured()
+    await _check_bot_configured(db)
 
     # Check if already linked
     existing = await get_telegram_link(db, user.id)
@@ -108,7 +234,7 @@ async def start_telegram_link(
         )
 
     try:
-        bot_username = await get_bot_info()
+        bot_username = await get_bot_info(db)
     except TelegramBotError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -156,7 +282,7 @@ async def send_test_message(
     db: AsyncSession = Depends(get_db),
 ) -> TelegramTestMessageResponse:
     """Send a test message to the user's linked Telegram account."""
-    _check_bot_configured()
+    await _check_bot_configured(db)
 
     link = await get_telegram_link(db, user.id)
     if link is None:
@@ -170,6 +296,7 @@ async def send_test_message(
             link.chat_id,
             "This is a test message from GlycemicGPT. "
             "Your Telegram notifications are working correctly!",
+            db,
         )
     except TelegramBotError:
         raise HTTPException(
