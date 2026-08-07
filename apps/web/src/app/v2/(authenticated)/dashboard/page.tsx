@@ -12,10 +12,7 @@ import {
   type LoopStatusInfo,
 } from "@/components/GlucoseHero";
 import { ConnectionStatusBanner } from "@/components/ConnectionStatusBanner";
-import { V2GlucoseTrendChart } from "@/components/GlucoseTrendChart";
-import { V2MergedGlucoseTrendChart } from "@/components/MergedGlucoseTrendChart";
 import { CgmSummaryStats } from "@/components/CgmSummaryStats";
-import { V2AgpChart } from "@/components/AgpChart";
 import { V2InsulinSummaryStats } from "@/components/InsulinSummaryStats";
 import { DataSourcesFreshnessCard } from "@/components/DataSourcesFreshnessCard";
 import { LivePumpStats } from "@/components/LivePumpStats";
@@ -26,6 +23,7 @@ import {
 } from "@/components/DashboardTimeRangePicker";
 import { DashboardQueryStatus } from "@/components/DashboardQueryStatus";
 import { useDashboardTimeRange } from "@/components/DashboardTimeRangeProvider";
+import { DashboardChartPanels } from "@/compositions/DashboardChartPanels";
 
 import { useGlucoseStreamContext } from "@/providers/glucose-stream-provider";
 import { useUserContext } from "@/providers/user-provider";
@@ -72,10 +70,14 @@ function DashboardPageContent() {
     useGlucoseStreamContext();
   // Chart refresh: throttle to once per 5 minutes when new SSE data arrives
   const [chartRefreshKey, setChartRefreshKey] = useState(0);
-  const lastRefreshRef = useRef(0);
+  const lastRefreshRef = useRef<number | null>(null);
   useEffect(() => {
     if (glucose?.reading_timestamp) {
       const now = Date.now();
+      if (lastRefreshRef.current === null) {
+        lastRefreshRef.current = now;
+        return;
+      }
       if (now - lastRefreshRef.current > 5 * 60 * 1000) {
         lastRefreshRef.current = now;
         setChartRefreshKey((k) => k + 1);
@@ -324,68 +326,40 @@ function DashboardPageContent() {
             </div>
           </div>
         </div>
-        {/* Mobile glucose trend chart */}
-        <AnimatedCard className="lg:hidden" delay={0.1}>
-          <Panel
-            disableHeaderMobile
-            fullWidthMobile
-            heading="Merged Glucose Trend"
-            bodyClassName="p-0 sm:p-0"
-            className="min-w-0"
-          >
-            <V2MergedGlucoseTrendChart
-              forecast={forecast}
-              hasConfiguredPump={hasConfiguredPump}
-              thresholds={glucoseThresholds}
-              unit={unit}
-            />
-          </Panel>
-        </AnimatedCard>
-        {/* Desktop glucose trend chart */}
-        <AnimatedCard className="hidden lg:block" delay={0.12}>
-          <Panel
-            heading="Glucose Trend"
-            bodyClassName="p-0 sm:p-0"
-            className="min-w-0"
-          >
-            <V2GlucoseTrendChart
-              hasConfiguredPump={hasConfiguredPump}
-              thresholds={glucoseThresholds}
-              forecast={forecast}
-              unit={unit}
-              embedded
-            />
-          </Panel>
-        </AnimatedCard>
-        {/* CGM and insulin summaries */}
-        <AnimatedCard
-          className="grid grid-cols-1 gap-dashboard-panel-gap lg:grid-cols-2"
-          delay={0.15}
+        <DashboardChartPanels
+          forecast={forecast}
+          hasConfiguredPump={hasConfiguredPump}
+          thresholds={glucoseThresholds}
+          unit={unit}
         >
-          <CgmSummaryStats
-            stats={cgmStats}
-            isLoading={cgmLoading}
-            isUpdating={cgmUpdating || tirUpdating}
-            hasBackgroundError={cgmBackgroundError || tirBackgroundError}
-            rangeLabel={dashboardTimeRange.label}
-            error={cgmError}
-            period={cgmPeriod}
-            className="h-full"
-            unit={unit}
-            timeInRange={{
-              buckets: tirStats?.buckets ?? null,
-              readingsCount: tirStats?.readings_count ?? 0,
-              previousBuckets: tirStats?.previous_buckets ?? null,
-              previousReadingsCount: tirStats?.previous_readings_count ?? null,
-              error: tirError,
-              isLoading: tirLoading,
-            }}
-          />
-          <V2InsulinSummaryStats className="h-full" />
-        </AnimatedCard>
-        <AnimatedCard delay={0.2}>
-          <V2AgpChart thresholds={glucoseThresholds} unit={unit} />
-        </AnimatedCard>
+          {/* CGM and insulin summaries */}
+          <AnimatedCard
+            className="grid grid-cols-1 gap-dashboard-panel-gap lg:grid-cols-2"
+            delay={0.15}
+          >
+            <CgmSummaryStats
+              stats={cgmStats}
+              isLoading={cgmLoading}
+              isUpdating={cgmUpdating || tirUpdating}
+              hasBackgroundError={cgmBackgroundError || tirBackgroundError}
+              rangeLabel={dashboardTimeRange.label}
+              error={cgmError}
+              period={cgmPeriod}
+              className="h-full"
+              unit={unit}
+              timeInRange={{
+                buckets: tirStats?.buckets ?? null,
+                readingsCount: tirStats?.readings_count ?? 0,
+                previousBuckets: tirStats?.previous_buckets ?? null,
+                previousReadingsCount:
+                  tirStats?.previous_readings_count ?? null,
+                error: tirError,
+                isLoading: tirLoading,
+              }}
+            />
+            <V2InsulinSummaryStats className="h-full" />
+          </AnimatedCard>
+        </DashboardChartPanels>
       </div>
     </PageTransition>
   );

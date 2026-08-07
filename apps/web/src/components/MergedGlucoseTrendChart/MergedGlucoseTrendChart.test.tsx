@@ -9,9 +9,13 @@ import {
 import uPlot from "uplot";
 import type { ForecastReadResponse } from "@/lib/api";
 import type { ChartTimePeriod } from "@/lib/chart-periods";
+import type { DashboardChartQueryData } from "@/components/DashboardChartQueryAdapters/DashboardChartQueryAdapters";
 import { DesktopMergedGlucoseTrendChart } from "./DesktopMergedGlucoseTrendChart";
 import { MergedChartStatusMessages } from "./MergedChartStatusMessages";
-import { MergedGlucoseTrendChart } from "./MergedGlucoseTrendChart";
+import {
+  MergedGlucoseTrendChart,
+  MergedGlucoseTrendChartView,
+} from "./MergedGlucoseTrendChart";
 import { MergedGlucoseTrendSurface } from "./MergedGlucoseTrendSurface";
 import { MobileMergedGlucoseTrendChart } from "./MobileMergedGlucoseTrendChart";
 import type {
@@ -152,6 +156,54 @@ jest.mock("uplot", () => ({
 
 const mockUPlot = uPlot as unknown as jest.Mock;
 
+function queryData(): DashboardChartQueryData {
+  return {
+    glucose: {
+      readings: [
+        {
+          value: 120,
+          reading_timestamp: "2026-07-16T10:00:00.000Z",
+          trend: "flat",
+          trend_rate: null,
+          received_at: "2026-07-16T10:00:00.000Z",
+          source: "dexcom",
+        },
+      ],
+      isLoading: false,
+      isUpdating: false,
+      isPreviousData: false,
+      hasBackgroundError: false,
+      error: null,
+      period: "3h",
+      setPeriod: jest.fn(),
+      refetch: glucoseRefetch,
+    },
+    insulin: {
+      data: { boluses: [], total_count: 0, period_days: 1 },
+      isLoading: false,
+      isUpdating: false,
+      isPreviousData: false,
+      hasBackgroundError: false,
+      error: null,
+      period: "24h",
+      setPeriod: jest.fn(),
+      refetch: insulinRefetch,
+    },
+    pump: {
+      events: [],
+      count: 0,
+      hasPumpHistory: false,
+      isPossiblyTruncated: false,
+      isLoading: false,
+      isUpdating: false,
+      isPreviousData: false,
+      hasBackgroundError: false,
+      error: null,
+      refetch: pumpRefetch,
+    },
+  };
+}
+
 function rapidDose(
   timestampMs: number,
   kind: "manual_bolus" | "automated_correction" = "manual_bolus",
@@ -242,6 +294,26 @@ beforeEach(() => {
 });
 
 describe("MergedGlucoseTrendChart", () => {
+  it.each(["mobile", "desktop"] as const)(
+    "initializes only the selected %s runtime",
+    (presentation) => {
+      render(
+        <MergedGlucoseTrendChartView
+          presentation={presentation}
+          queryData={queryData()}
+        />,
+      );
+
+      expect(mockUPlot).toHaveBeenCalledTimes(1);
+      expect(
+        screen.getByTestId(`${presentation}-merged-glucose-trend`),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryAllByTestId(/(?:mobile|desktop)-merged-glucose-trend/),
+      ).toHaveLength(1);
+    },
+  );
+
   it("renders separate mobile and desktop components at the md breakpoint", () => {
     render(<MergedGlucoseTrendChart hasConfiguredPump />);
 

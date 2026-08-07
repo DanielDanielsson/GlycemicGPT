@@ -10,6 +10,7 @@ import { DashboardQueryStatus } from "@/components/DashboardQueryStatus";
 import {
   legacyDashboardChartQueryAdapter,
   v2DashboardChartQueryAdapter,
+  type DashboardChartQueryData,
   type DashboardChartQueryAdapter,
 } from "@/components/DashboardChartQueryAdapters/DashboardChartQueryAdapters";
 import { GLUCOSE_THRESHOLDS } from "@/components/GlucoseHero";
@@ -47,31 +48,21 @@ function isMultiDay(domain: [number, number]): boolean {
   return domain[1] - domain[0] >= 3 * 24 * 60 * 60 * 1000;
 }
 
-function MergedGlucoseTrendChartContent({
+export function MergedGlucoseTrendChartView({
   className,
   forecast,
   hasConfiguredPump = false,
   refreshKey,
   thresholds,
   unit = "mgdl",
-  queryAdapter,
+  presentation = "both",
+  queryData,
 }: MergedGlucoseTrendChartProps & {
-  queryAdapter: DashboardChartQueryAdapter;
+  presentation?: "mobile" | "desktop" | "both";
+  queryData: DashboardChartQueryData;
 }) {
   const dashboardTimeRange = useOptionalDashboardTimeRange();
-  const glucose = queryAdapter.useGlucoseHistory(
-    "3h",
-    dashboardTimeRange?.currentWindow,
-  );
-  const insulin = queryAdapter.useBolusReview(
-    insulinPeriod(glucose.period),
-    dashboardTimeRange?.currentWindow,
-    500,
-  );
-  const pump = queryAdapter.usePumpEvents(
-    glucose.period,
-    dashboardTimeRange?.currentWindow,
-  );
+  const { glucose, insulin, pump } = queryData;
   const refetchGlucose = glucose.refetch;
   const refetchInsulin = insulin.refetch;
   const refetchPump = pump.refetch;
@@ -250,12 +241,48 @@ function MergedGlucoseTrendChartContent({
         isUpdating={glucose.isUpdating || insulin.isUpdating || pump.isUpdating}
         rangeLabel={dashboardTimeRange?.label}
       />
-      <MobileMergedGlucoseTrendChart className="md:hidden" model={model} />
-      <DesktopMergedGlucoseTrendChart
-        className="hidden md:block"
-        model={model}
-      />
+      {presentation === "mobile" || presentation === "both" ? (
+        <MobileMergedGlucoseTrendChart
+          className={presentation === "both" ? "md:hidden" : undefined}
+          model={model}
+        />
+      ) : null}
+      {presentation === "desktop" || presentation === "both" ? (
+        <DesktopMergedGlucoseTrendChart
+          className={presentation === "both" ? "hidden md:block" : undefined}
+          model={model}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function MergedGlucoseTrendChartContent({
+  queryAdapter,
+  ...props
+}: MergedGlucoseTrendChartProps & {
+  queryAdapter: DashboardChartQueryAdapter;
+}) {
+  const dashboardTimeRange = useOptionalDashboardTimeRange();
+  const glucose = queryAdapter.useGlucoseHistory(
+    "3h",
+    dashboardTimeRange?.currentWindow,
+  );
+  const insulin = queryAdapter.useBolusReview(
+    insulinPeriod(glucose.period),
+    dashboardTimeRange?.currentWindow,
+    500,
+  );
+  const pump = queryAdapter.usePumpEvents(
+    glucose.period,
+    dashboardTimeRange?.currentWindow,
+  );
+
+  return (
+    <MergedGlucoseTrendChartView
+      {...props}
+      queryData={{ glucose, insulin, pump }}
+    />
   );
 }
 

@@ -2,16 +2,24 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 
 import {
+  getBolusReviewByDateRange,
   getGlucoseHistoryByDateRange,
+  getPumpEventHistory,
   type GlucoseHistoryResponse,
 } from "@/lib/api";
 import { useOptionalDashboardTimeRange } from "@/components/DashboardTimeRangeProvider";
 import { useUserContext } from "@/providers/user-provider";
 
-import { useDashboardGlucoseHistory } from "./dashboard-query-hooks";
+import {
+  useDashboardBolusReview,
+  useDashboardGlucoseHistory,
+  useDashboardPumpEvents,
+} from "./dashboard-query-hooks";
 
 jest.mock("@/lib/api", () => ({
+  getBolusReviewByDateRange: jest.fn(),
   getGlucoseHistoryByDateRange: jest.fn(),
+  getPumpEventHistory: jest.fn(),
 }));
 jest.mock("@/providers/user-provider", () => ({
   useUserContext: jest.fn(),
@@ -23,6 +31,10 @@ jest.mock("@/components/DashboardTimeRangeProvider", () => ({
 const mockGetGlucoseHistoryByDateRange = jest.mocked(
   getGlucoseHistoryByDateRange,
 );
+const mockGetBolusReviewByDateRange = jest.mocked(
+  getBolusReviewByDateRange,
+);
+const mockGetPumpEventHistory = jest.mocked(getPumpEventHistory);
 const mockUseUserContext = jest.mocked(useUserContext);
 const mockUseOptionalDashboardTimeRange = jest.mocked(
   useOptionalDashboardTimeRange,
@@ -98,6 +110,37 @@ describe("V2 dashboard query hooks", () => {
     );
     expect(revisit.result.current.readings).toHaveLength(1);
     expect(mockGetGlucoseHistoryByDateRange).toHaveBeenCalledTimes(1);
+  });
+
+  it("issues one initial request for each shared timeline resource", async () => {
+    mockGetGlucoseHistoryByDateRange.mockResolvedValue(firstResponse);
+    mockGetBolusReviewByDateRange.mockResolvedValue({
+      boluses: [],
+      period_days: 1,
+      total_count: 0,
+    });
+    mockGetPumpEventHistory.mockResolvedValue({ count: 0, events: [] });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    const view = renderHook(
+      () => ({
+        glucose: useDashboardGlucoseHistory("3h", firstWindow),
+        insulin: useDashboardBolusReview("24h", firstWindow, 500),
+        pump: useDashboardPumpEvents("3h", firstWindow),
+      }),
+      { wrapper: createWrapper(queryClient) },
+    );
+
+    await waitFor(() => {
+      expect(view.result.current.glucose.isLoading).toBe(false);
+      expect(view.result.current.insulin.isLoading).toBe(false);
+      expect(view.result.current.pump.isLoading).toBe(false);
+    });
+    expect(mockGetGlucoseHistoryByDateRange).toHaveBeenCalledTimes(1);
+    expect(mockGetBolusReviewByDateRange).toHaveBeenCalledTimes(1);
+    expect(mockGetPumpEventHistory).toHaveBeenCalledTimes(1);
   });
 
   it("keeps previous data visible while a new range loads", async () => {

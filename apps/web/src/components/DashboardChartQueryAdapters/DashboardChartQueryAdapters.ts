@@ -15,13 +15,20 @@ interface QueryTransitionState {
   isUpdating: boolean;
 }
 
-type GlucoseHistoryResult = ReturnType<typeof useGlucoseHistory> &
+export type GlucoseHistoryResult = ReturnType<typeof useGlucoseHistory> &
   QueryTransitionState;
-type BolusReviewResult = ReturnType<typeof useBolusReview> &
+export type BolusReviewResult = ReturnType<typeof useBolusReview> &
   QueryTransitionState;
-type PumpEventsResult = ReturnType<typeof usePumpEvents> & QueryTransitionState;
-type InsulinSummaryResult = ReturnType<typeof useInsulinSummary> &
+export type PumpEventsResult = ReturnType<typeof usePumpEvents> &
   QueryTransitionState;
+export type InsulinSummaryResult = ReturnType<typeof useInsulinSummary> &
+  QueryTransitionState;
+
+export interface DashboardChartQueryData {
+  glucose: GlucoseHistoryResult;
+  insulin: BolusReviewResult;
+  pump: PumpEventsResult;
+}
 
 function useLegacyGlucoseHistoryAdapter(
   ...args: Parameters<typeof useDashboardGlucoseHistory>

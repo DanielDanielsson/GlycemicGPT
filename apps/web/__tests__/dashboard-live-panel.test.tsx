@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import DashboardNewDesignPage from "@/app/v2/(authenticated)/dashboard/page";
 import { hasNightscoutPumpHint } from "@/lib/pump/pump-history-context";
+import { invalidateDashboardResources } from "@/lib/query/dashboard";
 import {
   getCgmSources,
   getGlookoStatus,
@@ -9,6 +10,8 @@ import {
   listIntegrations,
   listNightscoutConnections,
 } from "@/lib/api";
+
+let mockReadingTimestamp = "2026-07-04T10:00:00.000Z";
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -35,6 +38,7 @@ jest.mock("@/components/PageTransition", () => ({
 jest.mock("@/components/AgpChart", () => ({
   AgpChart: () => <div data-testid="agp-chart" />,
   V2AgpChart: () => <div data-testid="agp-chart" />,
+  V2AgpChartView: () => <div data-testid="agp-chart" />,
 }));
 
 jest.mock("@/components/CgmSummaryStats", () => ({
@@ -125,6 +129,7 @@ jest.mock("@/components/GlucoseHero", () => ({
 jest.mock("@/components/GlucoseTrendChart", () => ({
   GlucoseTrendChart: () => <div data-testid="glucose-trend-chart" />,
   V2GlucoseTrendChart: () => <div data-testid="glucose-trend-chart" />,
+  GlucoseTrendChartView: () => <div data-testid="glucose-trend-chart" />,
 }));
 
 jest.mock("@/components/MergedGlucoseTrendChart", () => ({
@@ -132,6 +137,9 @@ jest.mock("@/components/MergedGlucoseTrendChart", () => ({
     <div data-testid="merged-glucose-trend-chart" />
   ),
   V2MergedGlucoseTrendChart: () => (
+    <div data-testid="merged-glucose-trend-chart" />
+  ),
+  MergedGlucoseTrendChartView: () => (
     <div data-testid="merged-glucose-trend-chart" />
   ),
 }));
@@ -201,7 +209,7 @@ jest.mock("@/providers/glucose-stream-provider", () => ({
       iob: { current: 1.2 },
       is_stale: true,
       minutes_ago: 5,
-      reading_timestamp: "2026-07-04T10:00:00.000Z",
+      reading_timestamp: mockReadingTimestamp,
       trend: "Stable",
       value: 120,
     },
@@ -309,6 +317,36 @@ jest.mock("@/hooks/dashboard-query", () => {
       period: "24h",
       stats: null,
     }),
+    useDashboardGlucoseHistory: () => ({
+      error: null,
+      hasBackgroundError: false,
+      isLoading: false,
+      isUpdating: false,
+      period: "3h",
+      readings: [],
+      refetch: jest.fn(),
+      setPeriod: jest.fn(),
+    }),
+    useDashboardBolusReview: () => ({
+      data: null,
+      error: null,
+      hasBackgroundError: false,
+      isLoading: false,
+      isUpdating: false,
+      period: "24h",
+      refetch: jest.fn(),
+      setPeriod: jest.fn(),
+    }),
+    useDashboardPumpEvents: () => ({
+      error: null,
+      events: [],
+      hasBackgroundError: false,
+      hasPumpHistory: false,
+      isLoading: false,
+      isPossiblyTruncated: false,
+      isUpdating: false,
+      refetch: jest.fn(),
+    }),
     useDashboardPumpStatus: () => ({
       basal: { rate: 0.8 },
       battery: { percentage: 75 },
@@ -352,6 +390,14 @@ jest.mock("@/lib/api", () => ({
   listNightscoutConnections: jest.fn(),
 }));
 
+jest.mock("@/lib/query/dashboard", () => {
+  const actual = jest.requireActual("@/lib/query/dashboard");
+  return {
+    ...actual,
+    invalidateDashboardResources: jest.fn(),
+  };
+});
+
 const mockGetCgmSources = getCgmSources as jest.MockedFunction<
   typeof getCgmSources
 >;
@@ -369,6 +415,10 @@ const mockListNightscoutConnections =
   listNightscoutConnections as jest.MockedFunction<
     typeof listNightscoutConnections
   >;
+const mockInvalidateDashboardResources =
+  invalidateDashboardResources as jest.MockedFunction<
+    typeof invalidateDashboardResources
+  >;
 
 const NOW_MS = new Date("2026-07-04T10:05:06.000Z").getTime();
 const DEXCOM_LAST_SYNC_AT = "2026-07-04T10:00:00.000Z";
@@ -379,11 +429,16 @@ function renderDashboard() {
       queries: { retry: false },
     },
   });
-  return render(
+  const element = (
     <QueryClientProvider client={queryClient}>
       <DashboardNewDesignPage />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const result = render(element);
+  return {
+    ...result,
+    rerenderDashboard: () => result.rerender(element),
+  };
 }
 
 async function settleConnectionStatusRequests() {
@@ -399,6 +454,18 @@ async function settleConnectionStatusRequests() {
 describe("Dashboard live data panel", () => {
   beforeEach(() => {
     jest.spyOn(Date, "now").mockReturnValue(NOW_MS);
+    mockReadingTimestamp = "2026-07-04T10:00:00.000Z";
+    mockInvalidateDashboardResources.mockResolvedValue(undefined);
+    window.matchMedia = jest.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    }));
     mockGetCgmSources.mockResolvedValue({
       multiple_sources: false,
       primary_source: null,
@@ -513,18 +580,16 @@ describe("Dashboard live data panel", () => {
     await settleConnectionStatusRequests();
   });
 
-  it("shows the merged chart on mobile and the standard chart on desktop", async () => {
+  it("mounts only the mobile chart presentation", async () => {
     renderDashboard();
 
     const mergedGlucoseTrendPanel = screen.getByRole("region", {
       name: "Merged Glucose Trend",
     });
-    const glucoseTrendPanel = screen.getByRole("region", {
-      name: "Glucose Trend",
-    });
-
-    expect(mergedGlucoseTrendPanel.parentElement).toHaveClass("lg:hidden");
-    expect(glucoseTrendPanel.parentElement).toHaveClass("hidden", "lg:block");
+    expect(mergedGlucoseTrendPanel).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Glucose Trend" }),
+    ).not.toBeInTheDocument();
     await settleConnectionStatusRequests();
   });
 
@@ -621,6 +686,24 @@ describe("Dashboard live data panel", () => {
       "data-is-stale",
       "true",
     );
+  });
+
+  it("does not invalidate initial chart requests for the first SSE reading", async () => {
+    const view = renderDashboard();
+
+    expect(mockInvalidateDashboardResources).not.toHaveBeenCalled();
+
+    mockReadingTimestamp = "2026-07-04T10:01:00.000Z";
+    view.rerenderDashboard();
+    expect(mockInvalidateDashboardResources).not.toHaveBeenCalled();
+
+    jest.spyOn(Date, "now").mockReturnValue(NOW_MS + 5 * 60 * 1000 + 1);
+    mockReadingTimestamp = "2026-07-04T10:06:00.000Z";
+    view.rerenderDashboard();
+
+    await waitFor(() => {
+      expect(mockInvalidateDashboardResources).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("loads xDrip, Glooko, and Medtronic for Live Connections", async () => {

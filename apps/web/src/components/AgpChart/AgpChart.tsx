@@ -10,6 +10,7 @@ import {
   legacyDashboardChartQueryAdapter,
   v2DashboardChartQueryAdapter,
   type DashboardChartQueryAdapter,
+  type GlucoseHistoryResult,
 } from "@/components/DashboardChartQueryAdapters/DashboardChartQueryAdapters";
 import type { AGPBucket, GlucoseHistoryReading } from "@/lib/api";
 import type { HistoryWindow } from "@/lib/glucose/history-selection";
@@ -467,19 +468,17 @@ function AgpLegend() {
 }
 
 interface AgpChartForWindowProps extends AgpChartProps {
-  queryAdapter: DashboardChartQueryAdapter;
+  queryData: GlucoseHistoryResult;
   rangeLabel: string;
   timeZone: string;
-  window: HistoryWindow;
 }
 
 function AgpChartForWindow({
   className,
-  queryAdapter,
+  queryData,
   rangeLabel,
   thresholds,
   timeZone,
-  window,
   unit = "mgdl",
 }: AgpChartForWindowProps) {
   const {
@@ -489,7 +488,7 @@ function AgpChartForWindow({
     hasBackgroundError,
     error,
     refetch,
-  } = queryAdapter.useGlucoseHistory("3h", window);
+  } = queryData;
 
   const chartData = useMemo(
     () => transformBuckets(buildAgpBuckets(readings, timeZone)),
@@ -563,12 +562,29 @@ function AgpChartForWindow({
   );
 }
 
+function AgpChartForWindowQuery({
+  queryAdapter,
+  window,
+  ...props
+}: Omit<AgpChartForWindowProps, "queryData"> & {
+  queryAdapter: DashboardChartQueryAdapter;
+  window: HistoryWindow;
+}) {
+  const queryData = queryAdapter.useGlucoseHistory("3h", window);
+
+  return <AgpChartForWindow {...props} queryData={queryData} />;
+}
+
 function AgpChartContent({
   className,
   queryAdapter,
+  queryData,
   thresholds,
   unit = "mgdl",
-}: AgpChartProps & { queryAdapter: DashboardChartQueryAdapter }) {
+}: AgpChartProps & {
+  queryAdapter?: DashboardChartQueryAdapter;
+  queryData?: GlucoseHistoryResult;
+}) {
   const { currentWindow, label, timeZone } = useDashboardTimeRange();
   const durationMs = currentWindow
     ? new Date(currentWindow.to).getTime() -
@@ -592,14 +608,26 @@ function AgpChartContent({
     );
   }
 
+  const chartProps = {
+    className,
+    rangeLabel: label,
+    thresholds,
+    timeZone,
+    unit,
+  };
+
+  if (queryData) {
+    return <AgpChartForWindow {...chartProps} queryData={queryData} />;
+  }
+
+  if (!queryAdapter) {
+    throw new Error("AGP chart requires query data or a query adapter");
+  }
+
   return (
-    <AgpChartForWindow
-      className={className}
+    <AgpChartForWindowQuery
+      {...chartProps}
       queryAdapter={queryAdapter}
-      rangeLabel={label}
-      thresholds={thresholds}
-      timeZone={timeZone}
-      unit={unit}
       window={currentWindow}
     />
   );
@@ -618,6 +646,13 @@ export function V2AgpChart(props: AgpChartProps) {
   return (
     <AgpChartContent {...props} queryAdapter={v2DashboardChartQueryAdapter} />
   );
+}
+
+export function V2AgpChartView({
+  queryData,
+  ...props
+}: AgpChartProps & { queryData: GlucoseHistoryResult }) {
+  return <AgpChartContent {...props} queryData={queryData} />;
 }
 
 export default AgpChart;

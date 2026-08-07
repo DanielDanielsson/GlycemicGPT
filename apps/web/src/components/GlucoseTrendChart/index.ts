@@ -1,5 +1,6 @@
 export {
   GlucoseTrendChart,
+  GlucoseTrendChartView,
   V2GlucoseTrendChart,
   PERIOD_TO_MS,
   getPointColor,

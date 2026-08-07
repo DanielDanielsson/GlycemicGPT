@@ -1,5 +1,6 @@
 export {
   MergedGlucoseTrendChart,
+  MergedGlucoseTrendChartView,
   V2MergedGlucoseTrendChart,
 } from "./MergedGlucoseTrendChart";
 export { MobileMergedGlucoseTrendChart } from "./MobileMergedGlucoseTrendChart";

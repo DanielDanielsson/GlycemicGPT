@@ -8,6 +8,7 @@ import {
 import uPlot from "uplot";
 import {
   AgpChart,
+  V2AgpChartView,
   buildAgpBuckets,
   formatHour,
   transformBuckets,
@@ -303,6 +304,25 @@ describe("Dashboard AgpChart", () => {
         "Select a time range of a minimum of 2 days to see the AGP chart.",
       ),
     ).not.toBeInTheDocument();
+  });
+
+  it("renders shared glucose history without creating another query consumer", () => {
+    const queryData = {
+      ...mockHookReturn,
+      readings: makeReadings(),
+      hasBackgroundError: false,
+      isPreviousData: false,
+      isUpdating: false,
+    };
+
+    render(<V2AgpChartView queryData={queryData} />);
+
+    expect(mockUseGlucoseHistory).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("img", {
+        name: /Ambulatory glucose percentile bands for Last 14 days/,
+      }),
+    ).toBeInTheDocument();
   });
 
   it("destroys the uPlot instance on unmount", async () => {

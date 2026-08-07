@@ -28,6 +28,7 @@ import { DashboardQueryStatus } from "@/components/DashboardQueryStatus";
 import {
   legacyDashboardChartQueryAdapter,
   v2DashboardChartQueryAdapter,
+  type DashboardChartQueryData,
   type DashboardChartQueryAdapter,
 } from "@/components/DashboardChartQueryAdapters/DashboardChartQueryAdapters";
 import { GLUCOSE_THRESHOLDS } from "@/components/GlucoseHero";
@@ -1055,7 +1056,7 @@ export function isMultiDayChartDomain(
   return xDomain[1] - xDomain[0] >= MULTI_DAY_MIN_DURATION_MS;
 }
 
-function GlucoseTrendChartContent({
+export function GlucoseTrendChartView({
   refreshKey,
   className,
   hasConfiguredPump = false,
@@ -1063,8 +1064,8 @@ function GlucoseTrendChartContent({
   forecast,
   unit = "mgdl",
   embedded = false,
-  queryAdapter,
-}: GlucoseTrendChartProps & { queryAdapter: DashboardChartQueryAdapter }) {
+  queryData,
+}: GlucoseTrendChartProps & { queryData: DashboardChartQueryData }) {
   const dashboardTimeRange = useOptionalDashboardTimeRange();
   const cursorSyncKey = useId();
   const {
@@ -1076,7 +1077,7 @@ function GlucoseTrendChartContent({
     period,
     setPeriod,
     refetch,
-  } = queryAdapter.useGlucoseHistory("3h", dashboardTimeRange?.currentWindow);
+  } = queryData.glucose;
   const {
     data: insulinReview,
     isLoading: isInsulinLoading,
@@ -1085,11 +1086,7 @@ function GlucoseTrendChartContent({
     error: insulinQueryError,
     setPeriod: setInsulinPeriod,
     refetch: refetchInsulin,
-  } = queryAdapter.useBolusReview(
-    getInsulinPeriod(period),
-    dashboardTimeRange?.currentWindow,
-    500,
-  );
+  } = queryData.insulin;
   const {
     events: pumpEvents,
     hasPumpHistory,
@@ -1099,7 +1096,7 @@ function GlucoseTrendChartContent({
     error: pumpQueryError,
     isPossiblyTruncated,
     refetch: refetchPump,
-  } = queryAdapter.usePumpEvents(period, dashboardTimeRange?.currentWindow);
+  } = queryData.pump;
   const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
   const [timelineHover, setTimelineHover] =
@@ -1864,6 +1861,33 @@ function GlucoseTrendChartContent({
         {combinedTooltip}
       </div>
     </div>
+  );
+}
+
+function GlucoseTrendChartContent({
+  queryAdapter,
+  ...props
+}: GlucoseTrendChartProps & { queryAdapter: DashboardChartQueryAdapter }) {
+  const dashboardTimeRange = useOptionalDashboardTimeRange();
+  const glucose = queryAdapter.useGlucoseHistory(
+    "3h",
+    dashboardTimeRange?.currentWindow,
+  );
+  const insulin = queryAdapter.useBolusReview(
+    getInsulinPeriod(glucose.period),
+    dashboardTimeRange?.currentWindow,
+    500,
+  );
+  const pump = queryAdapter.usePumpEvents(
+    glucose.period,
+    dashboardTimeRange?.currentWindow,
+  );
+
+  return (
+    <GlucoseTrendChartView
+      {...props}
+      queryData={{ glucose, insulin, pump }}
+    />
   );
 }
 
