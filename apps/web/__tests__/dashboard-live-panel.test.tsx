@@ -429,15 +429,15 @@ function renderDashboard() {
       queries: { retry: false },
     },
   });
-  const element = (
+  const createElement = () => (
     <QueryClientProvider client={queryClient}>
       <DashboardNewDesignPage />
     </QueryClientProvider>
   );
-  const result = render(element);
+  const result = render(createElement());
   return {
     ...result,
-    rerenderDashboard: () => result.rerender(element),
+    rerenderDashboard: () => result.rerender(createElement()),
   };
 }
 
