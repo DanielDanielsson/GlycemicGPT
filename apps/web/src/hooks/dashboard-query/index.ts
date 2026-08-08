@@ -3,6 +3,7 @@ export {
   useDashboardConnectionFreshness,
   useDashboardForecast,
   useDashboardGlucoseHistory,
+  useDashboardGlucosePercentiles,
   useDashboardGlucoseRange,
   useDashboardGlucoseStats,
   useDashboardInsulinSummary,
@@ -11,3 +12,4 @@ export {
   useDashboardTimeInRangeStats,
 } from "./dashboard-query-hooks";
 export { useDashboardInvalidation } from "./use-dashboard-invalidation";
+export { useDashboardGlucoseSeries } from "./use-dashboard-glucose-series";

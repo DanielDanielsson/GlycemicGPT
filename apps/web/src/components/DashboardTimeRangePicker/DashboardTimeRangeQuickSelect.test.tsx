@@ -11,10 +11,13 @@ describe("DashboardTimeRangeQuickSelect", () => {
       />,
     );
 
-    expect(screen.getAllByRole("button")).toHaveLength(9);
+    expect(screen.getAllByRole("button")).toHaveLength(10);
     expect(
       screen.getByRole("button", { name: "Last 24 hours" }),
     ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByRole("button", { name: "Last 60 days" }),
+    ).toHaveAttribute("aria-pressed", "false");
     expect(
       screen.getByRole("button", { name: "Last 90 days" }),
     ).toHaveAttribute("aria-pressed", "false");
@@ -47,13 +50,39 @@ describe("DashboardTimeRangeQuickSelect", () => {
     );
 
     expect(screen.getAllByRole("button")).toHaveLength(4);
-    expect(screen.getByRole("button", { name: "Last 3 hours" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Last 24 hours" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Last 3 days" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Last 90 days" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Last 3 hours" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Last 24 hours" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Last 3 days" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Last 90 days" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("resolves 90 days as a custom window", () => {
+  it("uses one column per option when six ranges are configured", () => {
+    render(
+      <DashboardTimeRangeQuickSelect
+        ranges={["3h", "6h", "12h", "24h", "3d", "7d"]}
+        selection={{ kind: "preset", range: "24h" }}
+        timeZone="UTC"
+        onChange={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("group", { name: "Quick time range" })).toHaveClass(
+      "grid-cols-6",
+    );
+  });
+
+  it.each([
+    ["Last 60 days", "60d"],
+    ["Last 90 days", "90d"],
+  ])("selects %s as a dashboard preset", (accessibleName, range) => {
     const onChange = jest.fn();
 
     render(
@@ -64,18 +93,8 @@ describe("DashboardTimeRangeQuickSelect", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Last 90 days" }));
+    fireEvent.click(screen.getByRole("button", { name: accessibleName }));
 
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: "custom",
-        label: "Last 90 days",
-        raw: { from: "now-90d", to: "now" },
-        window: expect.objectContaining({
-          from: expect.any(String),
-          to: expect.any(String),
-        }),
-      }),
-    );
+    expect(onChange).toHaveBeenCalledWith({ kind: "preset", range });
   });
 });

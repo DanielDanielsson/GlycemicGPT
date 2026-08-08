@@ -150,6 +150,32 @@ describe("apiFetch", () => {
     });
   });
 
+  it("requests the optimized glucose series contract without a history fallback", async () => {
+    const payload = { readings: [], metadata: {} };
+    const mockFetch = jest.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: jest.fn().mockResolvedValue(payload),
+    });
+    global.fetch = mockFetch;
+    const { getGlucoseSeries } = require("@/lib/api");
+
+    await expect(
+      getGlucoseSeries(
+        "2026-08-01T00:00:00.000Z",
+        "2026-08-02T00:00:00.000Z",
+        640,
+        undefined,
+        true,
+      ),
+    ).resolves.toBe(payload);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0][0]).toBe(
+      "/api/integrations/glucose/series?start=2026-08-01T00%3A00%3A00.000Z&end=2026-08-02T00%3A00%3A00.000Z&maxDataPoints=640&include_secondary=true",
+    );
+  });
+
   it("merges custom options with credentials", async () => {
     const mockFetch = jest.fn().mockResolvedValue({ status: 200, ok: true });
     global.fetch = mockFetch;

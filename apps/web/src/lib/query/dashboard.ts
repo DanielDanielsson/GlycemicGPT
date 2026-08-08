@@ -14,6 +14,8 @@ export type DashboardResource =
   | "forecast"
   | "glooko-status"
   | "glucose-history"
+  | "glucose-percentiles"
+  | "glucose-series"
   | "glucose-range"
   | "glucose-stats"
   | "insulin-summary"

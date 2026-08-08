@@ -3045,6 +3045,39 @@ export interface GlucoseHistoryResponse {
   count: number;
 }
 
+export type GlucoseSeriesReductionMode = "raw" | "reduced";
+
+export interface GlucoseSeriesContinuityGap {
+  start: string;
+  end: string;
+}
+
+export interface GlucoseSeriesContinuity {
+  max_gap_ms: number;
+  gaps: GlucoseSeriesContinuityGap[];
+}
+
+export interface GlucoseSeriesResponse {
+  readings: GlucoseHistoryReading[];
+  metadata: {
+    requested_max_data_points: number;
+    raw_reading_count: number;
+    returned_point_count: number;
+    reduction_mode: GlucoseSeriesReductionMode;
+    bucket_interval_ms: number | null;
+    timeline_revision: string;
+    applied_window: {
+      start: string;
+      end: string;
+    };
+    source_selection: {
+      requested: "primary" | "primary_and_secondary";
+      excluded_sources: string[];
+    };
+    continuity: GlucoseSeriesContinuity;
+  };
+}
+
 export async function getGlucoseHistory(
   minutes: number = 180,
   limit: number = 288,
@@ -3056,6 +3089,29 @@ export async function getGlucoseHistory(
   );
   if (!response.ok) {
     throw await apiRequestError(response, "Failed to fetch glucose history");
+  }
+  return response.json();
+}
+
+export async function getGlucoseSeries(
+  start: string,
+  end: string,
+  maxDataPoints: number,
+  signal?: AbortSignal,
+  includeSecondary = false,
+): Promise<GlucoseSeriesResponse> {
+  const params = new URLSearchParams({
+    start,
+    end,
+    maxDataPoints: String(maxDataPoints),
+  });
+  if (includeSecondary) params.set("include_secondary", "true");
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/integrations/glucose/series?${params.toString()}`,
+    { signal },
+  );
+  if (!response.ok) {
+    throw await apiRequestError(response, "Failed to fetch glucose series");
   }
   return response.json();
 }
@@ -3522,6 +3578,23 @@ export async function getGlucosePercentiles(
     throw new Error(
       error.detail || `Failed to fetch glucose percentiles: ${response.status}`,
     );
+  }
+  return response.json();
+}
+
+export async function getGlucosePercentilesByDateRange(
+  start: string,
+  end: string,
+  tz?: string,
+  signal?: AbortSignal,
+): Promise<GlucosePercentilesResponse> {
+  const timezone = tz ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/integrations/glucose/percentiles?${buildDateRangeParams(start, end)}&tz=${encodeURIComponent(timezone)}`,
+    { signal },
+  );
+  if (!response.ok) {
+    throw await apiRequestError(response, "Failed to fetch glucose percentiles");
   }
   return response.json();
 }

@@ -253,11 +253,15 @@ export const DashboardTimeRangePicker = ({
   const availablePresetRanges = useMemo(
     () =>
       presetRanges
-        ? GLUCOSE_TIME_RANGES.filter((range) =>
-            presetRanges.includes(range.key),
+        ? GLUCOSE_TIME_RANGES.filter(
+            (range) =>
+              presetRanges.includes(range.key) &&
+              range.hours <= maxRangeDays * 24,
           )
-        : GLUCOSE_TIME_RANGES,
-    [presetRanges],
+        : GLUCOSE_TIME_RANGES.filter(
+            (range) => range.hours <= maxRangeDays * 24,
+          ),
+    [maxRangeDays, presetRanges],
   );
 
   const quickRanges = useMemo(() => {
@@ -505,7 +509,7 @@ export const DashboardTimeRangePicker = ({
     return (
       <div className="min-w-[224px]">
         <div className="mb-2 flex items-center justify-between">
-          <span className="font_metric_caption text-foreground-primary">
+          <span className="font_ui_micro text-foreground-primary">
             {monthLabel}
           </span>
         </div>
@@ -513,7 +517,7 @@ export const DashboardTimeRangePicker = ({
           {WEEKDAY_LABELS.map((weekday) => (
             <span
               key={weekday}
-              className="font_metric_caption text-center text-foreground-secondary"
+              className="font_ui_micro text-center text-foreground-secondary"
             >
               {weekday}
             </span>
@@ -532,7 +536,7 @@ export const DashboardTimeRangePicker = ({
                 key={day.date.toISOString()}
                 type="button"
                 className={twMerge(
-                  "font_metric_caption min-h-7 cursor-pointer rounded-panel border border-transparent text-center transition-colors",
+                  "font_ui_micro min-h-7 cursor-pointer rounded-panel border border-transparent text-center transition-colors disabled:cursor-not-allowed",
                   day.inCurrentMonth
                     ? "text-foreground-primary"
                     : "text-foreground-secondary",
@@ -562,7 +566,7 @@ export const DashboardTimeRangePicker = ({
           >
             <Button
               ariaLabel="Move time range backwards"
-              className="grid h-9 w-9 place-items-center border-r border-border-default text-foreground-secondary transition-colors hover:bg-surface-secondary hover:text-foreground-primary"
+              className="grid h-9 w-9 cursor-pointer place-items-center border-r border-border-default text-foreground-secondary transition-colors hover:bg-surface-secondary hover:text-foreground-primary disabled:cursor-not-allowed"
               onClick={() => moveWindow(-1)}
               disabled={disabled || !currentWindow}
             >
@@ -571,7 +575,7 @@ export const DashboardTimeRangePicker = ({
             <Button
               aria-expanded={isOpen}
               ariaLabel={`Time range selected: ${label}`}
-              className="font_metric_caption flex h-9 min-w-[11rem] items-center gap-2 px-3 text-left text-foreground-primary transition-colors hover:bg-surface-secondary"
+              className="font_ui_micro flex h-9 min-w-[11rem] cursor-pointer items-center gap-2 px-3 text-left text-foreground-primary transition-colors hover:bg-surface-secondary disabled:cursor-not-allowed"
               disabled={disabled}
               onClick={() => setIsOpen((open) => !open)}
             >
@@ -585,7 +589,7 @@ export const DashboardTimeRangePicker = ({
             </Button>
             <Button
               ariaLabel="Move time range forwards"
-              className="grid h-9 w-9 place-items-center border-l border-border-default text-foreground-secondary transition-colors hover:bg-surface-secondary hover:text-foreground-primary"
+              className="grid h-9 w-9 cursor-pointer place-items-center border-l border-border-default text-foreground-secondary transition-colors hover:bg-surface-secondary hover:text-foreground-primary disabled:cursor-not-allowed"
               onClick={() => moveWindow(1)}
               disabled={disabled || !canMoveForward}
             >
@@ -593,7 +597,7 @@ export const DashboardTimeRangePicker = ({
             </Button>
             <Button
               ariaLabel="Zoom out time range"
-              className="grid h-9 w-9 place-items-center border-l border-border-default text-foreground-secondary transition-colors hover:bg-surface-secondary hover:text-foreground-primary"
+              className="grid h-9 w-9 cursor-pointer place-items-center border-l border-border-default text-foreground-secondary transition-colors hover:bg-surface-secondary hover:text-foreground-primary disabled:cursor-not-allowed"
               onClick={zoomOut}
               disabled={disabled || !currentWindow}
             >
@@ -604,7 +608,7 @@ export const DashboardTimeRangePicker = ({
           <SecondaryButton
             aria-expanded={isOpen}
             ariaLabel={`Time range selected: ${label}`}
-            className="h-10 min-w-[11rem] justify-start text-left"
+            className="font_ui_micro h-10 min-w-[11rem] justify-start text-left"
             data-testid="dashboard-time-range-picker-toolbar"
             disabled={disabled}
             onClick={() => setIsOpen((open) => !open)}
@@ -650,23 +654,23 @@ export const DashboardTimeRangePicker = ({
               )}
             >
               {!presetOnly ? (
-                <div className="grid min-h-0 content-start gap-4 overflow-auto border-b border-border-default p-3 md:border-b-0 md:border-r">
-                  <div className="grid gap-3">
+                <div className="grid min-h-0 content-start gap-3 overflow-auto border-b border-border-default p-2 md:border-b-0 md:border-r">
+                  <div className="grid gap-2">
                     <div className="flex items-center justify-between gap-4">
-                      <p className="font_metric_caption text-foreground-secondary">
+                      <p className="font_ui_micro text-foreground-secondary">
                         Absolute time range
                       </p>
-                      <span className="font_metric_caption text-foreground-secondary">
+                      <span className="font_ui_micro text-foreground-secondary">
                         {timeZone}
                       </span>
                     </div>
                     <label className="grid gap-1">
-                      <span className="font_metric_caption text-foreground-secondary">
+                      <span className="font_ui_micro text-foreground-secondary">
                         From
                       </span>
                       <div className="flex overflow-hidden rounded-panel border border-border-default bg-surface-elevated">
                         <Input
-                          className="font_body_3 min-w-0 flex-1 bg-transparent px-3 py-2 text-foreground-primary outline-none"
+                          className="font_ui_micro min-w-0 flex-1 bg-transparent px-2 py-1.5 text-foreground-primary outline-none"
                           value={fromInput}
                           onChange={(event) => setFromInput(event.target.value)}
                           onKeyDown={(event) => {
@@ -680,7 +684,7 @@ export const DashboardTimeRangePicker = ({
                         />
                         <Button
                           ariaLabel="Open calendar"
-                          className="grid w-10 place-items-center border-l border-border-default text-foreground-primary"
+                          className="grid w-9 cursor-pointer place-items-center border-l border-border-default text-foreground-primary disabled:cursor-not-allowed"
                           onClick={handleCalendarOpen}
                         >
                           <Icon
@@ -692,12 +696,12 @@ export const DashboardTimeRangePicker = ({
                       </div>
                     </label>
                     <label className="grid gap-1">
-                      <span className="font_metric_caption text-foreground-secondary">
+                      <span className="font_ui_micro text-foreground-secondary">
                         To
                       </span>
                       <div className="flex overflow-hidden rounded-panel border border-border-default bg-surface-elevated">
                         <Input
-                          className="font_body_3 min-w-0 flex-1 bg-transparent px-3 py-2 text-foreground-primary outline-none"
+                          className="font_ui_micro min-w-0 flex-1 bg-transparent px-2 py-1.5 text-foreground-primary outline-none"
                           value={toInput}
                           onChange={(event) => setToInput(event.target.value)}
                           onKeyDown={(event) => {
@@ -711,7 +715,7 @@ export const DashboardTimeRangePicker = ({
                         />
                         <Button
                           ariaLabel="Open calendar"
-                          className="grid w-10 place-items-center border-l border-border-default text-foreground-primary"
+                          className="grid w-9 cursor-pointer place-items-center border-l border-border-default text-foreground-primary disabled:cursor-not-allowed"
                           onClick={handleCalendarOpen}
                         >
                           <Icon
@@ -723,18 +727,27 @@ export const DashboardTimeRangePicker = ({
                       </div>
                     </label>
                     {error && (
-                      <p className="font_metric_caption text-signal-warning-text">
+                      <p className="font_ui_micro text-signal-warning-text">
                         {error}
                       </p>
                     )}
-                    <div className="flex flex-wrap gap-2">
-                      <SecondaryButton size="sm" onClick={copyRange}>
+                    <div className="flex flex-wrap gap-1">
+                      <SecondaryButton
+                        className="font_ui_micro"
+                        size="sm"
+                        onClick={copyRange}
+                      >
                         Copy
                       </SecondaryButton>
-                      <SecondaryButton size="sm" onClick={pasteRange}>
+                      <SecondaryButton
+                        className="font_ui_micro"
+                        size="sm"
+                        onClick={pasteRange}
+                      >
                         Paste
                       </SecondaryButton>
                       <SecondaryButton
+                        className="font_ui_micro"
                         size="sm"
                         onClick={() =>
                           applyRawRange({ from: fromInput, to: toInput })
@@ -746,14 +759,14 @@ export const DashboardTimeRangePicker = ({
                   </div>
 
                   {draftStart && (
-                    <div className="grid gap-3 border-t border-border-default pt-3">
+                    <div className="grid gap-2 border-t border-border-default pt-2">
                       <div className="flex items-center justify-between">
-                        <p className="font_metric_caption text-foreground-secondary">
+                        <p className="font_ui_micro text-foreground-secondary">
                           Calendar
                         </p>
                         <div className="flex gap-1">
                           <Button
-                            className="grid h-7 w-7 place-items-center rounded-panel border border-border-default"
+                            className="grid h-7 w-7 cursor-pointer place-items-center rounded-panel border border-border-default disabled:cursor-not-allowed"
                             onClick={() =>
                               setLeftMonth(addMonths(leftMonth, -1))
                             }
@@ -761,7 +774,7 @@ export const DashboardTimeRangePicker = ({
                             ‹
                           </Button>
                           <Button
-                            className="grid h-7 w-7 place-items-center rounded-panel border border-border-default"
+                            className="grid h-7 w-7 cursor-pointer place-items-center rounded-panel border border-border-default disabled:cursor-not-allowed"
                             onClick={() =>
                               setLeftMonth(addMonths(leftMonth, 1))
                             }
@@ -770,19 +783,19 @@ export const DashboardTimeRangePicker = ({
                           </Button>
                         </div>
                       </div>
-                      <div className="flex flex-wrap gap-4">
+                      <div className="flex flex-wrap gap-3">
                         {renderMonth(leftMonth)}
                         {renderMonth(addMonths(leftMonth, 1))}
                       </div>
                       <div className="flex justify-end gap-2">
                         <Button
-                          className="font_metric_caption rounded-panel border border-border-default px-2 py-1.5 text-foreground-secondary"
+                          className="font_ui_micro cursor-pointer rounded-panel border border-border-default px-2 py-1 text-foreground-secondary disabled:cursor-not-allowed"
                           onClick={() => setDraftStart(null)}
                         >
                           Cancel
                         </Button>
                         <Button
-                          className="font_metric_label rounded-panel border border-accent bg-accent/10 px-3 py-1.5 text-accent"
+                          className="font_ui_micro cursor-pointer rounded-panel border border-accent bg-accent/10 px-2 py-1 text-accent disabled:cursor-not-allowed"
                           disabled={!draftStart || !draftEnd}
                           onClick={applyCalendarRange}
                         >
@@ -793,8 +806,8 @@ export const DashboardTimeRangePicker = ({
                   )}
 
                   {recents.length > 0 && (
-                    <div className="grid gap-2 border-t border-border-default pt-3">
-                      <p className="font_metric_caption text-foreground-secondary">
+                    <div className="grid gap-1 border-t border-border-default pt-2">
+                      <p className="font_ui_micro text-foreground-secondary">
                         Recently used absolute ranges
                       </p>
                       <div className="grid gap-1">
@@ -805,7 +818,7 @@ export const DashboardTimeRangePicker = ({
                           return (
                             <Button
                               key={`${recent.from}-${recent.to}`}
-                              className="font_metric_caption rounded-panel px-2 py-1.5 text-left text-foreground-secondary hover:bg-surface-secondary hover:text-foreground-primary"
+                              className="font_ui_micro cursor-pointer rounded-panel px-2 py-1 text-left text-foreground-secondary hover:bg-surface-secondary hover:text-foreground-primary disabled:cursor-not-allowed"
                               onClick={() =>
                                 applyRawRange(recent, resolved?.display)
                               }
@@ -833,7 +846,7 @@ export const DashboardTimeRangePicker = ({
                       <Button
                         key={range.key}
                         className={twMerge(
-                          "font_metric_caption rounded-panel px-2 py-1.5 transition-colors",
+                          "font_ui_micro cursor-pointer rounded-panel px-2 py-1 transition-colors disabled:cursor-not-allowed",
                           activePreset === range.key
                             ? "bg-surface-secondary text-foreground-primary"
                             : "text-foreground-primary hover:bg-surface-secondary",
@@ -850,7 +863,7 @@ export const DashboardTimeRangePicker = ({
                     <div className="border-b border-border-default p-2">
                       <Input
                         aria-label="Search quick ranges"
-                        className="font_metric_caption w-full rounded-panel border border-border-default bg-surface-elevated px-2 py-2 text-foreground-primary outline-none"
+                        className="font_ui_micro w-full rounded-panel border border-border-default bg-surface-elevated px-2 py-1.5 text-foreground-primary outline-none"
                         placeholder="Search quick ranges"
                         value={search}
                         onChange={(event) => setSearch(event.target.value)}
@@ -875,7 +888,7 @@ export const DashboardTimeRangePicker = ({
                                 : undefined
                             }
                             className={twMerge(
-                              "font_metric_caption flex w-full items-center justify-between rounded-panel px-2 py-1.5 text-left transition-colors",
+                              "font_ui_micro flex w-full cursor-pointer items-center justify-between rounded-panel px-2 py-1 text-left transition-colors disabled:cursor-not-allowed",
                               disabled
                                 ? "cursor-not-allowed text-foreground-secondary opacity-45"
                                 : "text-foreground-secondary hover:bg-surface-secondary hover:text-foreground-primary",

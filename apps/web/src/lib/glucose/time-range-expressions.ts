@@ -54,6 +54,7 @@ export const DASHBOARD_QUICK_RANGES: QuickRangeOption[] = [
   { from: 'now-2d', to: 'now', display: 'Last 2 days' },
   { from: 'now-7d', to: 'now', display: 'Last 7 days' },
   { from: 'now-30d', to: 'now', display: 'Last 30 days' },
+  { from: 'now-60d', to: 'now', display: 'Last 60 days' },
   { from: 'now-90d', to: 'now', display: 'Last 90 days' },
   { from: 'now-6M', to: 'now', display: 'Last 6 months' },
   { from: 'now-1y', to: 'now', display: 'Last 1 year' },

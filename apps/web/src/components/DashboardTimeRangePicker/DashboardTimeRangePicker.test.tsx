@@ -104,11 +104,52 @@ describe("DashboardTimeRangePicker", () => {
       screen.getByRole("button", { name: "Last 30 days" }),
     ).toBeInTheDocument();
     expect(
+      screen.queryByRole("button", { name: "60 days" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "90 days" }),
+    ).not.toBeInTheDocument();
+    expect(
       screen.queryByRole("button", { name: "Last 90 days" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Last 1 year" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("offers 60 and 90 day dashboard presets when the limit allows them", () => {
+    const onChange = jest.fn();
+
+    render(
+      <DashboardTimeRangePicker
+        selection={{ kind: "preset", range: "30d" }}
+        currentWindow={{
+          from: "2026-05-10T00:00:00.000Z",
+          to: "2026-08-08T00:00:00.000Z",
+        }}
+        maxRangeDays={90}
+        timeZone="UTC"
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /time range selected/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "60 days" }));
+    expect(onChange).toHaveBeenLastCalledWith({
+      kind: "preset",
+      range: "60d",
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /time range selected/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "90 days" }));
+    expect(onChange).toHaveBeenLastCalledWith({
+      kind: "preset",
+      range: "90d",
+    });
   });
 
   it("keeps calendar dates in the configured timezone", () => {
@@ -137,7 +178,9 @@ describe("DashboardTimeRangePicker", () => {
     fireEvent.click(
       screen.getByRole("button", { name: /time range selected/i }),
     );
-    fireEvent.click(screen.getAllByRole("button", { name: "Open calendar" })[0]);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Open calendar" })[0],
+    );
     fireEvent.click(screen.getByRole("button", { name: "Use dates" }));
 
     const [fromInput, toInput] = screen.getAllByRole("textbox");
@@ -218,6 +261,15 @@ describe("DashboardTimeRangePicker", () => {
       "border-border-default",
       "bg-surface-primary",
     );
+    expect(trigger).toHaveClass("font_ui_micro");
+    expect(screen.getByText("Absolute time range")).toHaveClass(
+      "font_ui_micro",
+    );
+    expect(screen.getAllByRole("textbox")[0]).toHaveClass(
+      "font_ui_micro",
+      "px-2",
+      "py-1.5",
+    );
     expect(screen.getByRole("button", { name: "Copy" })).toHaveClass(
       "cursor-pointer",
       "border-border-default",
@@ -244,6 +296,10 @@ describe("DashboardTimeRangePicker", () => {
     expect(
       screen.getByRole("button", { name: "Last 7 days" }),
     ).toBeInTheDocument();
+    screen
+      .getAllByRole("button")
+      .filter((button) => !button.hasAttribute("disabled"))
+      .forEach((button) => expect(button).toHaveClass("cursor-pointer"));
   });
 
   it("does not open when disabled", () => {

@@ -1,9 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 
 import { DashboardChartPanels } from "./DashboardChartPanels";
 
 const mockUseDashboardBolusReview = jest.fn();
-const mockUseDashboardGlucoseHistory = jest.fn();
+const mockUseDashboardGlucoseSeries = jest.fn();
 const mockUseDashboardPumpEvents = jest.fn();
 const mockTimelineChart = jest.fn();
 const mockAgpChart = jest.fn();
@@ -11,14 +11,15 @@ const mockAgpChart = jest.fn();
 jest.mock("@/hooks/dashboard-query", () => ({
   useDashboardBolusReview: (...args: unknown[]) =>
     mockUseDashboardBolusReview(...args),
-  useDashboardGlucoseHistory: (...args: unknown[]) =>
-    mockUseDashboardGlucoseHistory(...args),
+  useDashboardGlucoseSeries: (...args: unknown[]) =>
+    mockUseDashboardGlucoseSeries(...args),
   useDashboardPumpEvents: (...args: unknown[]) =>
     mockUseDashboardPumpEvents(...args),
 }));
 
 jest.mock("@/components/DashboardTimeRangeProvider", () => ({
   useDashboardTimeRange: () => ({
+    selection: { kind: "preset", range: "7d" },
     currentWindow: {
       from: "2026-08-01T00:00:00.000Z",
       to: "2026-08-04T00:00:00.000Z",
@@ -34,7 +35,7 @@ jest.mock("@/components/DashboardTimelineChart", () => ({
 }));
 
 jest.mock("@/components/AgpChart", () => ({
-  V2AgpChartView: (props: unknown) => {
+  V2AgpChart: (props: unknown) => {
     mockAgpChart(props);
     return <div data-testid="agp-chart" />;
   },
@@ -43,12 +44,12 @@ jest.mock("@/components/AgpChart", () => ({
 describe("DashboardChartPanels", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockUseDashboardGlucoseHistory.mockReturnValue({ period: "3h" });
+    mockUseDashboardGlucoseSeries.mockReturnValue({ period: "3h" });
     mockUseDashboardBolusReview.mockReturnValue({ data: { boluses: [] } });
     mockUseDashboardPumpEvents.mockReturnValue({ events: [] });
   });
 
-  it("loads timeline resources once and shares glucose history with AGP", () => {
+  it("loads the timeline from the measured series while AGP stays independent", () => {
     render(
       <DashboardChartPanels>
         <div data-testid="summary-panels" />
@@ -59,8 +60,12 @@ describe("DashboardChartPanels", () => {
       from: "2026-08-01T00:00:00.000Z",
       to: "2026-08-04T00:00:00.000Z",
     };
-    expect(mockUseDashboardGlucoseHistory).toHaveBeenCalledTimes(1);
-    expect(mockUseDashboardGlucoseHistory).toHaveBeenCalledWith("3h", window);
+    expect(mockUseDashboardGlucoseSeries).toHaveBeenCalledWith(
+      null,
+      "3h",
+      window,
+      { from: "now-168h", to: "now" },
+    );
     expect(mockUseDashboardBolusReview).toHaveBeenCalledTimes(1);
     expect(mockUseDashboardBolusReview).toHaveBeenCalledWith(
       "24h",
@@ -73,9 +78,42 @@ describe("DashboardChartPanels", () => {
     const timelineProps = mockTimelineChart.mock.calls[0][0];
     const agpProps = mockAgpChart.mock.calls[0][0];
     expect(timelineProps.queryData.glucose).toBe(
-      mockUseDashboardGlucoseHistory.mock.results[0].value,
+      mockUseDashboardGlucoseSeries.mock.results[0].value,
     );
-    expect(agpProps.queryData).toBe(timelineProps.queryData.glucose);
+    expect(agpProps.queryData).toBeUndefined();
+
+    act(() => timelineProps.onPlotWidthChange(641.8));
+    expect(mockUseDashboardGlucoseSeries).toHaveBeenLastCalledWith(
+      641.8,
+      "3h",
+      window,
+      { from: "now-168h", to: "now" },
+    );
+
+    const zoomWindow = {
+      from: "2026-08-02T10:00:00.000Z",
+      to: "2026-08-02T13:00:00.000Z",
+    };
+    act(() => {
+      timelineProps.onZoomDomainChange([
+        Date.parse(zoomWindow.from),
+        Date.parse(zoomWindow.to),
+      ]);
+    });
+    expect(mockUseDashboardGlucoseSeries).toHaveBeenLastCalledWith(
+      641.8,
+      "3h",
+      zoomWindow,
+      zoomWindow,
+    );
+
+    act(() => timelineProps.onZoomDomainChange(null));
+    expect(mockUseDashboardGlucoseSeries).toHaveBeenLastCalledWith(
+      641.8,
+      "3h",
+      window,
+      { from: "now-168h", to: "now" },
+    );
     expect(screen.getByTestId("summary-panels")).toBeInTheDocument();
   });
 });

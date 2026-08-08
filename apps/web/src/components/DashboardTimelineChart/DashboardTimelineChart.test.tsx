@@ -7,8 +7,8 @@ const mockDesktopTimelineRuntime = jest.fn();
 const mockMergedRuntime = jest.fn();
 
 jest.mock("@/components/GlucoseTrendChart", () => ({
-  GlucoseTrendChartView: () => {
-    mockDesktopTimelineRuntime();
+  GlucoseTrendChartView: (props: unknown) => {
+    mockDesktopTimelineRuntime(props);
     return <div data-testid="desktop-timeline-runtime" />;
   },
 }));
@@ -16,10 +16,12 @@ jest.mock("@/components/GlucoseTrendChart", () => ({
 jest.mock("@/components/MergedGlucoseTrendChart", () => ({
   MergedGlucoseTrendChartView: ({
     presentation,
+    ...props
   }: {
     presentation: "mobile" | "desktop";
+    onPlotWidthChange?: (width: number) => void;
   }) => {
-    mockMergedRuntime(presentation);
+    mockMergedRuntime(presentation, props);
     return <div data-testid={`${presentation}-merged-runtime`} />;
   },
 }));
@@ -102,6 +104,24 @@ describe("DashboardTimelineChart", () => {
     expect(mockDesktopTimelineRuntime).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    [390, "merged"],
+    [800, "merged"],
+    [1200, "desktop"],
+  ])("hides the loading status at %ipx", (width, runtime) => {
+    installMatchMedia(width as number);
+
+    render(<DashboardTimelineChart queryData={queryData} />);
+
+    if (runtime === "merged") {
+      expect(mockMergedRuntime.mock.calls[0][1].showUpdatingStatus).toBe(false);
+    } else {
+      expect(
+        mockDesktopTimelineRuntime.mock.calls[0][0].showUpdatingStatus,
+      ).toBe(false);
+    }
+  });
+
   it("renders no expensive runtime before a browser breakpoint is available", () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -115,5 +135,78 @@ describe("DashboardTimelineChart", () => {
     ).toBeInTheDocument();
     expect(mockMergedRuntime).not.toHaveBeenCalled();
     expect(mockDesktopTimelineRuntime).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [390, "merged"],
+    [800, "merged"],
+    [1200, "desktop"],
+  ])(
+    "forwards plot measurement at %ipx to the active runtime",
+    (width, runtime) => {
+      installMatchMedia(width as number);
+      const onPlotWidthChange = jest.fn();
+
+      render(
+        <DashboardTimelineChart
+          onPlotWidthChange={onPlotWidthChange}
+          queryData={queryData}
+        />,
+      );
+
+      if (runtime === "merged") {
+        expect(mockMergedRuntime.mock.calls[0][1].onPlotWidthChange).toBe(
+          onPlotWidthChange,
+        );
+      } else {
+        expect(
+          mockDesktopTimelineRuntime.mock.calls[0][0].onPlotWidthChange,
+        ).toBe(onPlotWidthChange);
+      }
+    },
+  );
+
+  it.each([
+    [800, "merged"],
+    [1200, "desktop"],
+  ])(
+    "forwards zoom changes at %ipx to the active desktop runtime",
+    (width, runtime) => {
+      installMatchMedia(width as number);
+      const onZoomDomainChange = jest.fn();
+
+      render(
+        <DashboardTimelineChart
+          onZoomDomainChange={onZoomDomainChange}
+          queryData={queryData}
+        />,
+      );
+
+      if (runtime === "merged") {
+        expect(mockMergedRuntime.mock.calls[0][1].onZoomDomainChange).toBe(
+          onZoomDomainChange,
+        );
+      } else {
+        expect(
+          mockDesktopTimelineRuntime.mock.calls[0][0].onZoomDomainChange,
+        ).toBe(onZoomDomainChange);
+      }
+    },
+  );
+
+  it("clears the zoom query when the chart switches to mobile", () => {
+    const resizeTo = installMatchMedia(1200);
+    const onZoomDomainChange = jest.fn();
+
+    render(
+      <DashboardTimelineChart
+        onZoomDomainChange={onZoomDomainChange}
+        queryData={queryData}
+      />,
+    );
+    expect(onZoomDomainChange).not.toHaveBeenCalled();
+
+    resizeTo(390);
+    expect(onZoomDomainChange).toHaveBeenLastCalledWith(null);
   });
 });

@@ -536,8 +536,12 @@ describe("MergedGlucoseTrendChart", () => {
   });
 
   it("preserves desktop zoom during live domain shifts and resets for a new range", async () => {
+    const onZoomDomainChange = jest.fn();
     const { rerender } = render(
-      <DesktopMergedGlucoseTrendChart model={model()} />,
+      <DesktopMergedGlucoseTrendChart
+        model={model()}
+        onZoomDomainChange={onZoomDomainChange}
+      />,
     );
     const options = mockUPlot.mock.calls.at(-1)?.[0] as {
       hooks: { setSelect: Array<(chart: unknown) => void> };
@@ -554,10 +558,12 @@ describe("MergedGlucoseTrendChart", () => {
     expect(
       screen.getByRole("button", { name: "Reset Time Range" }),
     ).toBeInTheDocument();
+    expect(onZoomDomainChange).toHaveBeenLastCalledWith([600_000, 1_800_000]);
 
     rerender(
       <DesktopMergedGlucoseTrendChart
         model={model({ fullDomain: [5 * 60_000, 65 * 60_000] })}
+        onZoomDomainChange={onZoomDomainChange}
       />,
     );
 
@@ -575,6 +581,7 @@ describe("MergedGlucoseTrendChart", () => {
           fullDomain: [0, 2 * 60 * 60 * 1000],
           rangeSelectionKey: "period:6h",
         })}
+        onZoomDomainChange={onZoomDomainChange}
       />,
     );
 
@@ -583,6 +590,7 @@ describe("MergedGlucoseTrendChart", () => {
         screen.queryByRole("button", { name: "Reset Time Range" }),
       ).not.toBeInTheDocument(),
     );
+    expect(onZoomDomainChange).toHaveBeenLastCalledWith(null);
   });
 
   it("keeps the status live region mounted and names each retry action", () => {
@@ -626,6 +634,44 @@ describe("MergedGlucoseTrendChart", () => {
     expect(retryPump).toHaveBeenCalledTimes(1);
   });
 
+  it("can hide loading messages without hiding errors", () => {
+    const { rerender } = render(
+      <MergedChartStatusMessages
+        showLoading={false}
+        statuses={[
+          {
+            error: null,
+            isLoading: true,
+            label: "glucose readings",
+            onRetry: jest.fn(),
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.queryByText("Loading glucose readings"),
+    ).not.toBeInTheDocument();
+
+    rerender(
+      <MergedChartStatusMessages
+        showLoading={false}
+        statuses={[
+          {
+            error: "Unavailable",
+            isLoading: false,
+            label: "glucose readings",
+            onRetry: jest.fn(),
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByText("Unable to load glucose readings"),
+    ).toBeInTheDocument();
+  });
+
   it("shows the basal unit in the merged tooltip", () => {
     const timestampMs = 30 * 60 * 1000;
     render(
@@ -667,6 +713,32 @@ describe("MergedGlucoseTrendChart", () => {
     expect(screen.getByTestId("merged-chart-tooltip")).toHaveTextContent(
       "Basal: 1.20 U/hr",
     );
+  });
+
+  it("reports the exact uPlot width after fixed axes", () => {
+    const onPlotWidthChange = jest.fn();
+    const { rerender } = render(
+      <MergedGlucoseTrendSurface
+        heightClassName="h-80"
+        interactive
+        model={model()}
+        onPlotWidthChange={onPlotWidthChange}
+        xDomain={[0, 60 * 60 * 1000]}
+      />,
+    );
+
+    expect(onPlotWidthChange).toHaveBeenLastCalledWith(604);
+
+    rerender(
+      <MergedGlucoseTrendSurface
+        heightClassName="h-80"
+        interactive
+        model={model({ hasPump: true })}
+        onPlotWidthChange={onPlotWidthChange}
+        xDomain={[0, 60 * 60 * 1000]}
+      />,
+    );
+    expect(onPlotWidthChange).toHaveBeenLastCalledWith(568);
   });
 
   it("clears merged hover details when the x domain changes", () => {

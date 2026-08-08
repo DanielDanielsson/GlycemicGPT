@@ -57,9 +57,13 @@ export function MergedGlucoseTrendChartView({
   unit = "mgdl",
   presentation = "both",
   queryData,
+  onPlotWidthChange,
+  onZoomDomainChange,
+  showUpdatingStatus = true,
 }: MergedGlucoseTrendChartProps & {
   presentation?: "mobile" | "desktop" | "both";
   queryData: DashboardChartQueryData;
+  showUpdatingStatus?: boolean;
 }) {
   const dashboardTimeRange = useOptionalDashboardTimeRange();
   const { glucose, insulin, pump } = queryData;
@@ -165,6 +169,8 @@ export function MergedGlucoseTrendChartView({
     () => ({
       activityIntervals: pumpTimeline.activityIntervals,
       basalSegments: pumpTimeline.basalSegments,
+      continuity: glucose.continuity ?? null,
+      resolutionMode: glucose.resolutionMode ?? null,
       doses,
       forecast,
       forecastEligible,
@@ -205,6 +211,8 @@ export function MergedGlucoseTrendChartView({
       forecastPoints,
       fullDomain,
       glucose.error,
+      glucose.continuity,
+      glucose.resolutionMode,
       glucose.isLoading,
       glucose.readings.length,
       hasPump,
@@ -238,19 +246,27 @@ export function MergedGlucoseTrendChartView({
           insulin.hasBackgroundError ||
           pump.hasBackgroundError
         }
-        isUpdating={glucose.isUpdating || insulin.isUpdating || pump.isUpdating}
+        isUpdating={
+          showUpdatingStatus &&
+          (glucose.isUpdating || insulin.isUpdating || pump.isUpdating)
+        }
         rangeLabel={dashboardTimeRange?.label}
       />
       {presentation === "mobile" || presentation === "both" ? (
         <MobileMergedGlucoseTrendChart
           className={presentation === "both" ? "md:hidden" : undefined}
           model={model}
+          onPlotWidthChange={onPlotWidthChange}
+          showLoadingStatus={showUpdatingStatus}
         />
       ) : null}
       {presentation === "desktop" || presentation === "both" ? (
         <DesktopMergedGlucoseTrendChart
           className={presentation === "both" ? "hidden md:block" : undefined}
           model={model}
+          onPlotWidthChange={onPlotWidthChange}
+          onZoomDomainChange={onZoomDomainChange}
+          showLoadingStatus={showUpdatingStatus}
         />
       ) : null}
     </div>

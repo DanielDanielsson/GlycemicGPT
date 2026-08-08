@@ -25,6 +25,7 @@ const fontClassGroups = {
     "font_metric_label",
     "font_metric_caption",
     "font_nav_link",
+    "font_ui_micro",
     "font_page_title",
     "font_section_title",
     "font_body_text",
@@ -53,4 +54,5 @@ const customTwMerge = extendTailwindMerge<string, string>({
  * Utility function that merges Tailwind class values with support for
  * composition and the project's local font utility classes.
  */
-export const twMerge = (...classes: ClassNameValue[]) => customTwMerge(...classes);
+export const twMerge = (...classes: ClassNameValue[]) =>
+  customTwMerge(...classes);

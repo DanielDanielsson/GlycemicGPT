@@ -8,6 +8,7 @@ import {
 import uPlot from "uplot";
 import {
   AgpChart,
+  V2AgpChart,
   V2AgpChartView,
   buildAgpBuckets,
   formatHour,
@@ -17,6 +18,7 @@ import {
 const mockRefetch = jest.fn();
 const mockDestroy = jest.fn();
 const mockUseGlucoseHistory = jest.fn();
+const mockUseGlucosePercentiles = jest.fn();
 
 let mockDashboardTimeRange = {
   currentWindow: {
@@ -47,6 +49,8 @@ jest.mock("@/hooks/use-glucose-history", () => ({
 jest.mock("@/hooks/dashboard-query", () => ({
   useDashboardGlucoseHistory: (...args: unknown[]) =>
     mockUseGlucoseHistory(...args),
+  useDashboardGlucosePercentiles: (...args: unknown[]) =>
+    mockUseGlucosePercentiles(...args),
 }));
 
 jest.mock("uplot", () => ({
@@ -112,6 +116,15 @@ beforeEach(() => {
     refetch: mockRefetch,
   };
   mockUseGlucoseHistory.mockImplementation(() => mockHookReturn);
+  mockUseGlucosePercentiles.mockReturnValue({
+    buckets: buildAgpBuckets(makeReadings(), "UTC"),
+    isLoading: false,
+    isUpdating: false,
+    isPreviousData: false,
+    error: null,
+    hasBackgroundError: false,
+    refetch: mockRefetch,
+  });
 });
 
 describe("Dashboard AgpChart", () => {
@@ -317,6 +330,20 @@ describe("Dashboard AgpChart", () => {
 
     render(<V2AgpChartView queryData={queryData} />);
 
+    expect(mockUseGlucoseHistory).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("img", {
+        name: /Ambulatory glucose percentile bands for Last 14 days/,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("loads compact percentile buckets in V2 without fetching full history", () => {
+    render(<V2AgpChart />);
+
+    expect(mockUseGlucosePercentiles).toHaveBeenCalledWith(
+      mockDashboardTimeRange.currentWindow,
+    );
     expect(mockUseGlucoseHistory).not.toHaveBeenCalled();
     expect(
       screen.getByRole("img", {

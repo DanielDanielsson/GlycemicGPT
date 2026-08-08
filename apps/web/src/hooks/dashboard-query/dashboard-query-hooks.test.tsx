@@ -1,9 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 
 import {
   getBolusReviewByDateRange,
   getGlucoseHistoryByDateRange,
+  getGlucosePercentilesByDateRange,
   getPumpEventHistory,
   type GlucoseHistoryResponse,
 } from "@/lib/api";
@@ -13,12 +15,14 @@ import { useUserContext } from "@/providers/user-provider";
 import {
   useDashboardBolusReview,
   useDashboardGlucoseHistory,
+  useDashboardGlucosePercentiles,
   useDashboardPumpEvents,
 } from "./dashboard-query-hooks";
 
 jest.mock("@/lib/api", () => ({
   getBolusReviewByDateRange: jest.fn(),
   getGlucoseHistoryByDateRange: jest.fn(),
+  getGlucosePercentilesByDateRange: jest.fn(),
   getPumpEventHistory: jest.fn(),
 }));
 jest.mock("@/providers/user-provider", () => ({
@@ -30,6 +34,9 @@ jest.mock("@/components/DashboardTimeRangeProvider", () => ({
 
 const mockGetGlucoseHistoryByDateRange = jest.mocked(
   getGlucoseHistoryByDateRange,
+);
+const mockGetGlucosePercentilesByDateRange = jest.mocked(
+  getGlucosePercentilesByDateRange,
 );
 const mockGetBolusReviewByDateRange = jest.mocked(
   getBolusReviewByDateRange,
@@ -65,6 +72,18 @@ function createWrapper(queryClient: QueryClient) {
   return function Wrapper({ children }: { children: React.ReactNode }) {
     return (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+  };
+}
+
+function createStrictWrapper(queryClient: QueryClient) {
+  return function StrictWrapper({ children }: { children: React.ReactNode }) {
+    return (
+      <StrictMode>
+        <QueryClientProvider client={queryClient}>
+          {children}
+        </QueryClientProvider>
+      </StrictMode>
     );
   };
 }
@@ -110,6 +129,47 @@ describe("V2 dashboard query hooks", () => {
     );
     expect(revisit.result.current.readings).toHaveLength(1);
     expect(mockGetGlucoseHistoryByDateRange).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the initial request alive through a development Strict Mode remount", async () => {
+    mockGetGlucoseHistoryByDateRange.mockResolvedValue(firstResponse);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    const view = renderHook(
+      () => useDashboardGlucoseHistory("24h", firstWindow),
+      { wrapper: createStrictWrapper(queryClient) },
+    );
+
+    await waitFor(() => expect(view.result.current.readings).toHaveLength(1));
+    expect(mockGetGlucoseHistoryByDateRange).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads compact percentile buckets for the exact dashboard range", async () => {
+    mockGetGlucosePercentilesByDateRange.mockResolvedValue({
+      buckets: [
+        { hour: 0, p10: 80, p25: 90, p50: 110, p75: 130, p90: 150, count: 8 },
+      ],
+      period_days: 1,
+      readings_count: 8,
+      is_truncated: false,
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const view = renderHook(
+      () => useDashboardGlucosePercentiles(firstWindow),
+      { wrapper: createWrapper(queryClient) },
+    );
+
+    await waitFor(() => expect(view.result.current.buckets).toHaveLength(1));
+    expect(mockGetGlucosePercentilesByDateRange).toHaveBeenCalledWith(
+      firstWindow.from,
+      firstWindow.to,
+      expect.any(String),
+    );
+    expect(mockGetGlucoseHistoryByDateRange).not.toHaveBeenCalled();
   });
 
   it("issues one initial request for each shared timeline resource", async () => {
@@ -202,15 +262,12 @@ describe("V2 dashboard query hooks", () => {
     expect(view.result.current.isLoading).toBe(false);
   });
 
-  it("passes cancellation through when a range becomes obsolete", async () => {
-    let wasAborted = false;
+  it("keeps an obsolete range request alive while loading the new range", async () => {
+    const resolveRequests: Array<(value: GlucoseHistoryResponse) => void> = [];
     mockGetGlucoseHistoryByDateRange.mockImplementation(
-      (_start, _end, _limit, signal) =>
-        new Promise((_resolve, reject) => {
-          signal?.addEventListener("abort", () => {
-            wasAborted = true;
-            reject(new DOMException("Cancelled", "AbortError"));
-          });
+      () =>
+        new Promise((resolve) => {
+          resolveRequests.push(resolve);
         }),
     );
     const queryClient = new QueryClient({
@@ -228,7 +285,15 @@ describe("V2 dashboard query hooks", () => {
     );
 
     view.rerender({ window: secondWindow });
-    await waitFor(() => expect(wasAborted).toBe(true));
+    await waitFor(() =>
+      expect(mockGetGlucoseHistoryByDateRange).toHaveBeenCalledTimes(2),
+    );
+    expect(mockGetGlucoseHistoryByDateRange.mock.calls[0]).toHaveLength(3);
+    expect(mockGetGlucoseHistoryByDateRange.mock.calls[1]).toHaveLength(3);
+
+    await act(async () => {
+      resolveRequests.forEach((resolve) => resolve(firstResponse));
+    });
   });
 
   it("evicts inactive dashboard data after five minutes", async () => {

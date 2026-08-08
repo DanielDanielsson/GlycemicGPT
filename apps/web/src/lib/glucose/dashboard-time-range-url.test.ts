@@ -61,5 +61,13 @@ describe("dashboard time range URL", () => {
       from: "now-72h",
       to: "now",
     });
+    expect(getPresetRawTimeRange("60d")).toEqual({
+      from: "now-1440h",
+      to: "now",
+    });
+    expect(getPresetRawTimeRange("90d")).toEqual({
+      from: "now-2160h",
+      to: "now",
+    });
   });
 });

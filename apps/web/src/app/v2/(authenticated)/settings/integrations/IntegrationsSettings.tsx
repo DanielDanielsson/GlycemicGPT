@@ -53,6 +53,7 @@ export default function IntegrationsPage({
       "cgm-sources",
       "glooko-status",
       "medtronic-status",
+      "glucose-series",
       "glucose-history",
       "glucose-stats",
       "time-in-range",

@@ -8,6 +8,10 @@ import { useBolusReview } from "@/hooks/use-bolus-review";
 import { useGlucoseHistory } from "@/hooks/use-glucose-history";
 import { useInsulinSummary } from "@/hooks/use-insulin-summary";
 import { usePumpEvents } from "@/hooks/use-pump-events";
+import type {
+  GlucoseSeriesContinuity,
+  GlucoseSeriesReductionMode,
+} from "@/lib/api";
 
 interface QueryTransitionState {
   hasBackgroundError: boolean;
@@ -15,8 +19,13 @@ interface QueryTransitionState {
   isUpdating: boolean;
 }
 
+interface GlucoseQueryTransitionState extends QueryTransitionState {
+  continuity?: GlucoseSeriesContinuity | null;
+  resolutionMode?: GlucoseSeriesReductionMode | null;
+}
+
 export type GlucoseHistoryResult = ReturnType<typeof useGlucoseHistory> &
-  QueryTransitionState;
+  GlucoseQueryTransitionState;
 export type BolusReviewResult = ReturnType<typeof useBolusReview> &
   QueryTransitionState;
 export type PumpEventsResult = ReturnType<typeof usePumpEvents> &

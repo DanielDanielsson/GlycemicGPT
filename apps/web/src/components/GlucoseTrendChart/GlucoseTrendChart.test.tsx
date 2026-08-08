@@ -235,6 +235,57 @@ beforeEach(() => {
 });
 
 describe("Dashboard GlucoseTrendChart", () => {
+  it("reserves the loaded glucose plot height while readings load", () => {
+    mockHookReturn.isLoading = true;
+    const { rerender } = render(<GlucoseTrendChart embedded />);
+
+    const loadingSurface = screen.getByTestId("glucose-chart-loading-surface");
+    const loadingChart = screen.getByRole("img", {
+      name: "Loading glucose readings",
+    });
+    expect(loadingChart).toHaveClass("h-56", "sm:h-64", "md:h-72", "lg:h-80");
+    expect(loadingSurface).not.toHaveClass(
+      "animate-pulse",
+      "bg-surface-secondary",
+    );
+    expect(mockUPlot).toHaveBeenCalled();
+    const loadingOptions = mockUPlot.mock.calls.at(-1)?.[0] as {
+      axes: Array<{ grid?: { stroke: string } }>;
+    };
+    expect(loadingOptions.axes[0].grid).toBeDefined();
+    expect(loadingOptions.axes[1].grid).toBeDefined();
+    const loadingHeaderSpace = screen.getByTestId(
+      "glucose-trend-chart",
+    ).firstElementChild;
+    expect(loadingHeaderSpace).toHaveClass("mb-4");
+    expect(loadingHeaderSpace).toBeEmptyDOMElement();
+
+    mockHookReturn.isLoading = false;
+    mockHookReturn.readings = [makeReading(120, 5)];
+    rerender(<GlucoseTrendChart embedded />);
+
+    expect(
+      screen.getByRole("img", { name: /glucose readings for 3h/i }),
+    ).toHaveClass("h-56", "sm:h-64", "md:h-72", "lg:h-80");
+  });
+
+  it("reports the measured desktop uPlot width after padding and its axis", async () => {
+    const onPlotWidthChange = jest.fn();
+
+    render(<GlucoseTrendChart onPlotWidthChange={onPlotWidthChange} />);
+
+    await waitFor(() => expect(onPlotWidthChange).toHaveBeenCalled());
+    const measuredWidth = onPlotWidthChange.mock.calls.at(-1)?.[0] as number;
+    const container = screen.getByTestId("glucose-trend-chart");
+    const style = window.getComputedStyle(container);
+    const horizontalPadding =
+      Number.parseFloat(style.paddingLeft || "0") +
+      Number.parseFloat(style.paddingRight || "0");
+    expect(measuredWidth).toBe(
+      Math.floor(container.clientWidth - horizontalPadding - 36),
+    );
+  });
+
   it("maps glucose values to semantic signal tokens", () => {
     expect(getPointColor(54)).toBe("var(--color-signal-error-fill)");
     expect(getPointColor(55)).toBe("var(--color-signal-warning-fill)");
@@ -321,6 +372,22 @@ describe("Dashboard GlucoseTrendChart", () => {
       "var(--color-signal-warning-fill)",
       "var(--color-signal-error-fill)",
     ]);
+  });
+
+  it("connects sparse reduced points when continuity metadata confirms no raw gap", () => {
+    const segments = getGlucoseLineSegments(
+      [
+        { x: 0, y: 100, value: 100 },
+        { x: 60 * 60, y: 110, value: 110 },
+      ],
+      55,
+      70,
+      180,
+      250,
+      { max_gap_ms: 900_000, gaps: [] },
+    );
+
+    expect(segments).toHaveLength(1);
   });
 
   it("expands the glucose Y axis domain for configured targets", async () => {
@@ -776,6 +843,7 @@ describe("Dashboard GlucoseTrendChart", () => {
   });
 
   it("plots rapid doses above glucose on the same time domain", async () => {
+    const onZoomDomainChange = jest.fn();
     const timestamp = new Date(Date.now() - 5 * 60_000).toISOString();
     mockHookReturn.readings = [makeReading(120, 5)];
     mockInsulinHookReturn.data = {
@@ -815,7 +883,7 @@ describe("Dashboard GlucoseTrendChart", () => {
       total_count: 3,
     };
 
-    render(<GlucoseTrendChart />);
+    render(<GlucoseTrendChart onZoomDomainChange={onZoomDomainChange} />);
 
     expect(
       screen.getByRole("region", { name: "Insulin doses" }),
@@ -931,6 +999,13 @@ describe("Dashboard GlucoseTrendChart", () => {
     expect(
       screen.getByRole("button", { name: "Reset zoom" }),
     ).toBeInTheDocument();
+    expect(onZoomDomainChange).toHaveBeenLastCalledWith([
+      (domainStartSeconds + 10 * 60) * 1000,
+      (domainStartSeconds + 30 * 60) * 1000,
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset zoom" }));
+    expect(onZoomDomainChange).toHaveBeenLastCalledWith(null);
   });
 
   it("anchors blue manual and orange auto correction glucose markers by their tips", async () => {

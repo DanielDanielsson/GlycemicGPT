@@ -47,6 +47,7 @@ export function CgmSourceSettings(_props: CgmSourceSettingsProps = {}) {
         await updatePrimaryCgmSource(next);
         await invalidateResources([
           "cgm-sources",
+          "glucose-series",
           "glucose-history",
           "glucose-stats",
           "time-in-range",

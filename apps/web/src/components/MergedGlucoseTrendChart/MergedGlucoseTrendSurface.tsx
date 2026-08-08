@@ -12,6 +12,7 @@ import {
   getSharedTimeSplits,
 } from "@/lib/charts/chart-axis";
 import { getContinuousGlucosePairs } from "@/lib/charts/glucose-continuity";
+import { resolveGlucoseRenderMode } from "@/lib/charts/glucose-render-mode";
 import {
   resolveChartPalette,
   type ChartPalette,
@@ -80,6 +81,7 @@ interface MergedGlucoseTrendSurfaceProps {
   heightClassName: string;
   interactive: boolean;
   model: MergedChartModel;
+  onPlotWidthChange?: (width: number) => void;
   onZoomChange?: (domain: [number, number]) => void;
   xDomain: [number, number];
 }
@@ -242,7 +244,12 @@ function drawGlucose(
   }
 
   const pixelRatio = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
-  const showPoints = points.length <= Math.max(1, Math.floor(chart.bbox.width / pixelRatio / 5));
+  const showPoints =
+    resolveGlucoseRenderMode(
+      points.length,
+      chart.bbox.width / pixelRatio,
+      model.resolutionMode,
+    ) === "points";
 
   chart.ctx.save();
   chart.ctx.lineCap = "round";
@@ -252,6 +259,7 @@ function drawGlucose(
   for (const [previous, current] of getContinuousGlucosePairs(
     points,
     (point) => point.timestampMs,
+    model.continuity,
   )) {
     const x1 = chart.valToPos(previous.timestampMs / 1000, "x", true);
     const y1 = chart.valToPos(previous.valueMgDl, "glucose", true);
@@ -555,6 +563,7 @@ export function MergedGlucoseTrendSurface({
   heightClassName,
   interactive,
   model,
+  onPlotWidthChange,
   onZoomChange,
   xDomain,
 }: MergedGlucoseTrendSurfaceProps) {
@@ -570,6 +579,16 @@ export function MergedGlucoseTrendSurface({
     : DEFAULT_ACTIVITY_LAYOUT;
   const showDoseValues =
     !interactive || xDomain[1] - xDomain[0] <= MAX_LABELED_DESKTOP_RANGE_MS;
+
+  useEffect(() => {
+    if (dimensions.width <= 0) return;
+    onPlotWidthChange?.(
+      Math.max(
+        1,
+        Math.floor(dimensions.width - yAxisSize * (model.hasPump ? 2 : 1)),
+      ),
+    );
+  }, [dimensions.width, model.hasPump, onPlotWidthChange, yAxisSize]);
   const visiblePoints = useMemo(
     () => model.points.filter(
       (point) => point.timestampMs >= xDomain[0] && point.timestampMs <= xDomain[1]

@@ -1,4 +1,5 @@
 import type { ForecastReadResponse } from "@/lib/api";
+import type { ChartZoomChangeHandler } from "@/lib/charts/chart-zoom";
 import type { GlucoseUnit } from "@/lib/glucose-units";
 
 export interface GlucoseTrendChartProps {
@@ -14,4 +15,6 @@ export interface GlucoseTrendChartProps {
   forecast?: ForecastReadResponse | null;
   unit?: GlucoseUnit;
   embedded?: boolean;
+  onPlotWidthChange?: (width: number) => void;
+  onZoomDomainChange?: ChartZoomChangeHandler;
 }

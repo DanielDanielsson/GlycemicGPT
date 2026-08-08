@@ -111,6 +111,7 @@ function DashboardPageContent() {
   useEffect(() => {
     if (!user?.id || chartRefreshKey === 0) return;
     void invalidateDashboardResources(queryClient, user.id, [
+      "glucose-series",
       "glucose-history",
       "bolus-review",
       "pump-events",
@@ -309,7 +310,7 @@ function DashboardPageContent() {
           <div className="w-full">
             <div className="w-full lg:hidden">
               <DashboardTimeRangeQuickSelect
-                ranges={["3h", "24h", "3d", "7d"]}
+                ranges={["3h", "6h", "12h", "24h"]}
                 selection={dashboardTimeRange.selection}
                 timeZone={dashboardTimeRange.timeZone}
                 onChange={dashboardTimeRange.setSelection}
@@ -320,7 +321,7 @@ function DashboardPageContent() {
                 selection={dashboardTimeRange.selection}
                 currentWindow={dashboardTimeRange.currentWindow}
                 timeZone={dashboardTimeRange.timeZone}
-                maxRangeDays={31}
+                maxRangeDays={90}
                 onChange={dashboardTimeRange.setSelection}
               />
             </div>

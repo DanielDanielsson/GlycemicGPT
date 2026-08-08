@@ -632,7 +632,7 @@ describe("Dashboard live data panel", () => {
     expect(toolbarRegion).not.toHaveClass("order-first");
     expect(
       within(toolbarRegion).getByTestId("dashboard-time-range-quick-select"),
-    ).toHaveAttribute("data-ranges", "3h,24h,3d,7d");
+    ).toHaveAttribute("data-ranges", "3h,6h,12h,24h");
     expect(
       within(toolbarRegion).queryByText("Create report"),
     ).not.toBeInTheDocument();
@@ -641,7 +641,7 @@ describe("Dashboard live data panel", () => {
     ).not.toBeInTheDocument();
     expect(
       within(toolbarRegion).getByTestId("dashboard-time-range-picker"),
-    ).toHaveAttribute("data-max-range-days", "31");
+    ).toHaveAttribute("data-max-range-days", "90");
     await settleConnectionStatusRequests();
   });
 

@@ -1,10 +1,6 @@
 "use client";
 
 import { TimeRangeQuickSelect } from "@/components/TimeRangeQuickSelect";
-import {
-  resolveRawTimeRange,
-  type RawTimeRangeInput,
-} from "@/lib/glucose/time-range-expressions";
 import type { HistorySelection } from "@/lib/glucose/history-selection";
 import type {
   DashboardTimeRangeQuickSelectProps,
@@ -26,28 +22,34 @@ const QUICK_TIME_RANGES: QuickTimeRangeOption[] = [
   { key: "7d", label: "7d", accessibleLabel: "Last 7 days" },
   { key: "14d", label: "14d", accessibleLabel: "Last 14 days" },
   { key: "30d", label: "30d", accessibleLabel: "Last 30 days" },
+  { key: "60d", label: "60d", accessibleLabel: "Last 60 days" },
   { key: "90d", label: "90d", accessibleLabel: "Last 90 days" },
 ];
 
-function getActiveRange(
-  selection: HistorySelection,
-): QuickTimeRange | null {
+const GRID_COLS_BY_COUNT: Record<number, string> = {
+  1: "grid-cols-1",
+  2: "grid-cols-2",
+  3: "grid-cols-3",
+  4: "grid-cols-4",
+  5: "grid-cols-5",
+  6: "grid-cols-6",
+  7: "grid-cols-4",
+  8: "grid-cols-4",
+  9: "grid-cols-5",
+  10: "grid-cols-5",
+};
+
+function getActiveRange(selection: HistorySelection): QuickTimeRange | null {
   if (selection.kind === "preset") {
     return selection.range;
   }
 
-  return (
-    selection.raw?.from === "now-90d" &&
-    selection.raw.to === "now"
-      ? "90d"
-      : null
-  );
+  return null;
 }
 
 export function DashboardTimeRangeQuickSelect({
   ranges,
   selection,
-  timeZone,
   onChange,
 }: DashboardTimeRangeQuickSelectProps) {
   const options = ranges
@@ -55,33 +57,12 @@ export function DashboardTimeRangeQuickSelect({
     : QUICK_TIME_RANGES;
 
   function selectRange(range: QuickTimeRange) {
-    if (range !== "90d") {
-      onChange({ kind: "preset", range });
-      return;
-    }
-
-    const option = QUICK_TIME_RANGES.find(({ key }) => key === range);
-    const raw: RawTimeRangeInput = { from: "now-90d", to: "now" };
-    const resolved = resolveRawTimeRange(raw, {
-      display: option?.accessibleLabel ?? "Last 90 days",
-      timeZone,
-    });
-
-    if (!resolved) {
-      return;
-    }
-
-    onChange({
-      kind: "custom",
-      label: resolved.display,
-      raw,
-      window: resolved.window,
-    });
+    onChange({ kind: "preset", range });
   }
 
   return (
     <TimeRangeQuickSelect
-      className={options.length === 4 ? "grid-cols-4" : "grid-cols-5"}
+      className={GRID_COLS_BY_COUNT[options.length] ?? "grid-cols-5"}
       onChange={selectRange}
       options={options.map((option) => ({
         accessibleLabel: option.accessibleLabel,

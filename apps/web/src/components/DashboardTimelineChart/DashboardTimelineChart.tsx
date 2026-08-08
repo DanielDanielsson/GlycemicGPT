@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 import { AnimatedCard } from "@/components/AnimatedCard";
 import type { DashboardChartQueryData } from "@/components/DashboardChartQueryAdapters/DashboardChartQueryAdapters";
@@ -9,19 +9,20 @@ import { LumoseLoadingLogo } from "@/components/LumoseLoadingLogo";
 import { MergedGlucoseTrendChartView } from "@/components/MergedGlucoseTrendChart";
 import { Panel } from "@/components/Panel";
 import type { ForecastReadResponse } from "@/lib/api";
+import type { ChartZoomChangeHandler } from "@/lib/charts/chart-zoom";
 import type { GlucoseUnit } from "@/lib/glucose-units";
 
 const MEDIUM_BREAKPOINT_QUERY = "(min-width: 768px)";
 const LARGE_BREAKPOINT_QUERY = "(min-width: 1024px)";
 
 export type DashboardTimelineVariant =
-  | "mobile-merged"
-  | "desktop-merged"
-  | "desktop-timeline";
+  "mobile-merged" | "desktop-merged" | "desktop-timeline";
 
 interface DashboardTimelineChartProps {
   forecast?: ForecastReadResponse | null;
   hasConfiguredPump?: boolean;
+  onPlotWidthChange?: (width: number) => void;
+  onZoomDomainChange?: ChartZoomChangeHandler;
   queryData: DashboardChartQueryData;
   thresholds?: {
     urgentLow: number;
@@ -75,11 +76,19 @@ export function useDashboardTimelineVariant(): DashboardTimelineVariant | null {
 export function DashboardTimelineChart({
   forecast,
   hasConfiguredPump = false,
+  onPlotWidthChange,
+  onZoomDomainChange,
   queryData,
   thresholds,
   unit = "mgdl",
 }: DashboardTimelineChartProps) {
   const variant = useDashboardTimelineVariant();
+
+  useEffect(() => {
+    if (variant === "mobile-merged") {
+      onZoomDomainChange?.(null);
+    }
+  }, [onZoomDomainChange, variant]);
 
   if (variant === null) {
     return (
@@ -105,7 +114,10 @@ export function DashboardTimelineChart({
             embedded
             forecast={forecast}
             hasConfiguredPump={hasConfiguredPump}
+            onPlotWidthChange={onPlotWidthChange}
+            onZoomDomainChange={onZoomDomainChange}
             queryData={queryData}
+            showUpdatingStatus={false}
             thresholds={thresholds}
             unit={unit}
           />
@@ -126,8 +138,11 @@ export function DashboardTimelineChart({
         <MergedGlucoseTrendChartView
           forecast={forecast}
           hasConfiguredPump={hasConfiguredPump}
+          onPlotWidthChange={onPlotWidthChange}
+          onZoomDomainChange={onZoomDomainChange}
           presentation={variant === "mobile-merged" ? "mobile" : "desktop"}
           queryData={queryData}
+          showUpdatingStatus={false}
           thresholds={thresholds}
           unit={unit}
         />

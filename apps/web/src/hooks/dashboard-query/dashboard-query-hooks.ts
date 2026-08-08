@@ -13,6 +13,7 @@ import {
   getGlookoStatus,
   getGlucoseHistory,
   getGlucoseHistoryByDateRange,
+  getGlucosePercentilesByDateRange,
   getGlucoseStats,
   getGlucoseStatsByDateRange,
   getInsulinSummary,
@@ -86,6 +87,12 @@ const PERIOD_TO_DAYS = {
 export type DashboardStatsPeriod = keyof typeof PERIOD_TO_MINUTES_STATS;
 export type DashboardInsulinPeriod = keyof typeof PERIOD_TO_DAYS;
 export type DashboardBolusPeriod = Exclude<DashboardInsulinPeriod, "90d">;
+
+// These V2 query functions intentionally do not consume React Query's abort
+// signal. Next development Strict Mode unmounts and remounts effects once;
+// consuming the signal aborts every first request and forces a duplicate.
+// Query keys isolate range changes, so an older response cannot replace data
+// for the newly selected range.
 
 function useDashboardQueryIdentity() {
   const { user } = useUserContext();
@@ -166,19 +173,14 @@ export function useDashboardGlucoseHistory(
       range,
       sourceSelection: DASHBOARD_SERVER_SOURCE,
     }),
-    queryFn: ({ signal }) =>
+    queryFn: () =>
       normalizedWindow
         ? getGlucoseHistoryByDateRange(
             normalizedWindow.from,
             normalizedWindow.to,
             limit,
-            signal,
           )
-        : getGlucoseHistory(
-            minutes ?? PERIOD_TO_MINUTES[period],
-            limit,
-            signal,
-          ),
+        : getGlucoseHistory(minutes ?? PERIOD_TO_MINUTES[period], limit),
     enabled: Boolean(userId),
     gcTime: 5 * 60 * 1000,
     placeholderData: keepPreviousData,
@@ -201,6 +203,50 @@ export function useDashboardGlucoseHistory(
   };
 }
 
+export function useDashboardGlucosePercentiles(
+  window?: HistoryWindow | null,
+) {
+  const { dashboardTimeRange, timeZone, userId } = useDashboardQueryIdentity();
+  const { key: range, normalizedWindow } = resolveDashboardQueryRange(
+    window,
+    dashboardTimeRange,
+    timeZone,
+  );
+  const query = useQuery({
+    queryKey: dashboardQueryKeys.detail(userId, "glucose-percentiles", {
+      range,
+      sourceSelection: DASHBOARD_SERVER_SOURCE,
+      timeZone,
+    }),
+    queryFn: () => {
+      if (!normalizedWindow) {
+        throw new Error("Glucose percentiles require a date range");
+      }
+      return getGlucosePercentilesByDateRange(
+        normalizedWindow.from,
+        normalizedWindow.to,
+        timeZone,
+      );
+    },
+    enabled: Boolean(userId && normalizedWindow),
+    placeholderData: keepPreviousData,
+    refetchOnReconnect: false,
+    staleTime: DASHBOARD_HISTORICAL_STALE_TIME,
+  });
+  const refetch = useVoidRefetch(query.refetch);
+  const hasData = query.data !== undefined;
+
+  return {
+    buckets: query.data?.buckets ?? [],
+    isLoading: query.isPending && query.fetchStatus === "fetching",
+    isUpdating: query.isFetching && hasData,
+    isPreviousData: query.isPlaceholderData,
+    error: errorMessage(query.error, "Failed to load glucose percentiles"),
+    hasBackgroundError: Boolean(query.error && hasData),
+    refetch,
+  };
+}
+
 export function useDashboardGlucoseStats(
   initialPeriod: DashboardStatsPeriod = "24h",
   window?: HistoryWindow | null,
@@ -219,14 +265,13 @@ export function useDashboardGlucoseStats(
       range,
       sourceSelection: DASHBOARD_SERVER_SOURCE,
     }),
-    queryFn: ({ signal }) =>
+    queryFn: () =>
       normalizedWindow
         ? getGlucoseStatsByDateRange(
             normalizedWindow.from,
             normalizedWindow.to,
-            signal,
           )
-        : getGlucoseStats(minutes ?? PERIOD_TO_MINUTES_STATS[period], signal),
+        : getGlucoseStats(minutes ?? PERIOD_TO_MINUTES_STATS[period]),
     enabled: Boolean(userId),
     placeholderData: keepPreviousData,
     refetchOnReconnect: false,
@@ -264,17 +309,13 @@ export function useDashboardTimeInRangeStats(
       range,
       sourceSelection: DASHBOARD_SERVER_SOURCE,
     }),
-    queryFn: ({ signal }) =>
+    queryFn: () =>
       normalizedWindow
         ? getTimeInRangeDetailByDateRange(
             normalizedWindow.from,
             normalizedWindow.to,
-            signal,
           )
-        : getTimeInRangeDetailStats(
-            minutes ?? PERIOD_TO_MINUTES_STATS[period],
-            signal,
-          ),
+        : getTimeInRangeDetailStats(minutes ?? PERIOD_TO_MINUTES_STATS[period]),
     enabled: Boolean(userId),
     placeholderData: keepPreviousData,
     refetchOnReconnect: false,
@@ -317,22 +358,15 @@ export function useDashboardBolusReview(
       sourceSelection: DASHBOARD_SERVER_SOURCE,
       timeZone,
     }),
-    queryFn: ({ signal }) =>
+    queryFn: () =>
       normalizedWindow
         ? getBolusReviewByDateRange(
             normalizedWindow.from,
             normalizedWindow.to,
             limit,
             timeZone,
-            signal,
           )
-        : getBolusReview(
-            days ?? PERIOD_TO_DAYS[period],
-            limit,
-            offset,
-            timeZone,
-            signal,
-          ),
+        : getBolusReview(days ?? PERIOD_TO_DAYS[period], limit, offset, timeZone),
     enabled: Boolean(userId),
     placeholderData: keepPreviousData,
     refetchOnReconnect: false,
@@ -378,8 +412,7 @@ export function useDashboardPumpEvents(
       range,
       sourceSelection: DASHBOARD_SERVER_SOURCE,
     }),
-    queryFn: ({ signal }) =>
-      getPumpEventHistory(request.minutes, request.limit, signal),
+    queryFn: () => getPumpEventHistory(request.minutes, request.limit),
     enabled: Boolean(userId),
     placeholderData: keepPreviousData,
     refetchOnReconnect: false,
@@ -427,15 +460,14 @@ export function useDashboardInsulinSummary(
       sourceSelection: DASHBOARD_SERVER_SOURCE,
       timeZone,
     }),
-    queryFn: ({ signal }) =>
+    queryFn: () =>
       normalizedWindow
         ? getInsulinSummaryByDateRange(
             normalizedWindow.from,
             normalizedWindow.to,
             timeZone,
-            signal,
           )
-        : getInsulinSummary(days ?? PERIOD_TO_DAYS[period], timeZone, signal),
+        : getInsulinSummary(days ?? PERIOD_TO_DAYS[period], timeZone),
     enabled: Boolean(userId),
     placeholderData: keepPreviousData,
     refetchOnReconnect: false,
@@ -459,7 +491,7 @@ export function useDashboardPumpStatus() {
   const { userId } = useDashboardQueryIdentity();
   const query = useQuery({
     queryKey: dashboardQueryKeys.resource(userId, "pump-status"),
-    queryFn: ({ signal }) => getPumpStatus(signal),
+    queryFn: () => getPumpStatus(),
     enabled: Boolean(userId),
     refetchOnReconnect: true,
     staleTime: DASHBOARD_LIVE_STALE_TIME,
@@ -483,7 +515,7 @@ export function useDashboardForecast() {
   const { userId } = useDashboardQueryIdentity();
   const query = useQuery({
     queryKey: dashboardQueryKeys.resource(userId, "forecast"),
-    queryFn: ({ signal }) => getForecast(signal),
+    queryFn: () => getForecast(),
     enabled: Boolean(userId),
     refetchOnReconnect: true,
     staleTime: DASHBOARD_LIVE_STALE_TIME,
@@ -513,7 +545,7 @@ export function useDashboardGlucoseRange() {
   const { userId } = useDashboardQueryIdentity();
   const query = useQuery({
     queryKey: dashboardQueryKeys.resource(userId, "glucose-range"),
-    queryFn: ({ signal }) => getTargetGlucoseRange(signal),
+    queryFn: () => getTargetGlucoseRange(),
     enabled: Boolean(userId),
     refetchOnReconnect: false,
     staleTime: DASHBOARD_HISTORICAL_STALE_TIME,
@@ -546,31 +578,31 @@ export function useDashboardConnectionFreshness() {
   const enabled = Boolean(userId);
   const integrations = useQuery({
     queryKey: dashboardQueryKeys.resource(userId, "integrations"),
-    queryFn: ({ signal }) => listIntegrations(signal),
+    queryFn: () => listIntegrations(),
     enabled,
     ...connectionQueryOptions,
   });
   const nightscout = useQuery({
     queryKey: dashboardQueryKeys.resource(userId, "nightscout-connections"),
-    queryFn: ({ signal }) => listNightscoutConnections(signal),
+    queryFn: () => listNightscoutConnections(),
     enabled,
     ...connectionQueryOptions,
   });
   const cgm = useQuery({
     queryKey: dashboardQueryKeys.resource(userId, "cgm-sources"),
-    queryFn: ({ signal }) => getCgmSources(signal),
+    queryFn: () => getCgmSources(),
     enabled,
     ...connectionQueryOptions,
   });
   const glooko = useQuery({
     queryKey: dashboardQueryKeys.resource(userId, "glooko-status"),
-    queryFn: ({ signal }) => getGlookoStatus(signal),
+    queryFn: () => getGlookoStatus(),
     enabled,
     ...connectionQueryOptions,
   });
   const medtronic = useQuery({
     queryKey: dashboardQueryKeys.resource(userId, "medtronic-status"),
-    queryFn: ({ signal }) => getMedtronicConnectStatus(signal),
+    queryFn: () => getMedtronicConnectStatus(),
     enabled,
     ...connectionQueryOptions,
   });
