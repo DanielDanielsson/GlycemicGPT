@@ -28,6 +28,7 @@ export function Sidebar({ className }: SidebarProps) {
   const settingsNavigationItems = getSettingsNavigation(isCaregiver);
   const unreadCount = useUnreadInsightsCount(
     !isCaregiver && !isSettingsNavigation,
+    user?.id ?? null,
   );
 
   useEffect(() => {

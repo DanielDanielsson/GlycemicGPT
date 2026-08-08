@@ -28,6 +28,7 @@ export function MobileNav() {
   const settingsNavigationItems = getSettingsNavigation(isCaregiver);
   const unreadCount = useUnreadInsightsCount(
     !isCaregiver && !isSettingsNavigation,
+    user?.id ?? null,
   );
 
   useEffect(() => {
@@ -75,9 +76,7 @@ export function MobileNav() {
         aria-modal="true"
         className={twMerge(
           "fixed inset-0 z-50 transition-[visibility] duration-300 motion-reduce:transition-none lg:hidden",
-          isOpen
-            ? "visible"
-            : "pointer-events-none invisible delay-300",
+          isOpen ? "visible" : "pointer-events-none invisible delay-300",
         )}
         id="mobile-navigation-overlay"
         inert={!isOpen}
