@@ -345,6 +345,30 @@ class TestGlucosePercentiles:
                 assert bucket["p50"] <= bucket["p75"]
                 assert bucket["p75"] <= bucket["p90"]
 
+    async def test_percentiles_support_exact_two_day_range(self):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            cookie, user_id = await register_and_login(client)
+
+            async for db in get_db():
+                await seed_glucose(db, user_id, count=200)
+                break
+
+            end = datetime.now(UTC)
+            start = end - timedelta(days=2)
+            resp = await client.get(
+                "/api/integrations/glucose/percentiles",
+                params={"start": start.isoformat(), "end": end.isoformat()},
+                cookies={settings.jwt_cookie_name: cookie},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["period_days"] == 2
+        assert data["readings_count"] > 0
+        assert len(data["buckets"]) == 24
+
     async def test_percentiles_boundary_values(self):
         """Verify 40 and 400 mg/dL boundary values are included in percentile data."""
         async with AsyncClient(

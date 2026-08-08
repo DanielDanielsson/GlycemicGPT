@@ -56,6 +56,55 @@ class GlucoseHistoryResponse(BaseModel):
     count: int = Field(..., description="Number of readings returned")
 
 
+class GlucoseSeriesWindow(BaseModel):
+    """Exact UTC window applied to a glucose series request."""
+
+    start: datetime
+    end: datetime
+
+
+class GlucoseSeriesSourceSelection(BaseModel):
+    """Requested and resolved CGM source filtering for a glucose series."""
+
+    requested: Literal["primary", "primary_and_secondary"]
+    excluded_sources: list[str]
+
+
+class GlucoseSeriesContinuityGap(BaseModel):
+    """A real gap between consecutive raw sensor readings."""
+
+    start: datetime
+    end: datetime
+
+
+class GlucoseSeriesContinuity(BaseModel):
+    """Continuity information retained independently from point reduction."""
+
+    max_gap_ms: int = Field(..., ge=1)
+    gaps: list[GlucoseSeriesContinuityGap]
+
+
+class GlucoseSeriesMetadata(BaseModel):
+    """Resolution and source metadata for a glucose series response."""
+
+    requested_max_data_points: int = Field(..., ge=4, le=2_000)
+    raw_reading_count: int = Field(..., ge=0)
+    returned_point_count: int = Field(..., ge=0, le=2_000)
+    reduction_mode: Literal["raw", "reduced"]
+    bucket_interval_ms: int | None = Field(default=None, ge=1)
+    timeline_revision: str = Field(..., min_length=64, max_length=64)
+    applied_window: GlucoseSeriesWindow
+    source_selection: GlucoseSeriesSourceSelection
+    continuity: GlucoseSeriesContinuity
+
+
+class GlucoseSeriesResponse(BaseModel):
+    """Resolution aware glucose readings for timeline rendering."""
+
+    readings: list[GlucoseReadingResponse]
+    metadata: GlucoseSeriesMetadata
+
+
 class TimeInRangeResponse(BaseModel):
     """Response schema for time-in-range statistics."""
 

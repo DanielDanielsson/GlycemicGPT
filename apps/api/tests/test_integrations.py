@@ -562,10 +562,10 @@ class TestValidateDateRange:
         with pytest.raises(HTTPException) as exc_info:
             _validate_date_range(
                 datetime(2026, 1, 1, tzinfo=UTC),
-                datetime(2026, 3, 1, tzinfo=UTC),
+                datetime(2026, 4, 2, tzinfo=UTC),
             )
         assert exc_info.value.status_code == 422
-        assert "31 days" in exc_info.value.detail
+        assert "90 days" in exc_info.value.detail
 
     def test_valid_range_returns_tuple(self):
         from datetime import UTC, datetime
@@ -592,12 +592,12 @@ class TestValidateDateRange:
         assert exc_info.value.status_code == 422
         assert "timezone offset" in str(exc_info.value.detail)
 
-    def test_exactly_31_days_is_valid(self):
+    def test_exactly_90_days_is_valid(self):
         from datetime import UTC, datetime
 
         from src.routers.integrations import _validate_date_range
 
-        start = datetime(2026, 3, 1, tzinfo=UTC)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
         end = datetime(2026, 4, 1, tzinfo=UTC)
         result = _validate_date_range(start, end)
         assert result == (start, end)

@@ -117,6 +117,12 @@ from src.schemas.glucose import (
     GlucoseHistoryResponse,
     GlucosePercentilesResponse,
     GlucoseReadingResponse,
+    GlucoseSeriesContinuity,
+    GlucoseSeriesContinuityGap,
+    GlucoseSeriesMetadata,
+    GlucoseSeriesResponse,
+    GlucoseSeriesSourceSelection,
+    GlucoseSeriesWindow,
     GlucoseStatsResponse,
     SyncResponse,
     SyncStatusResponse,
@@ -194,6 +200,12 @@ from src.services.forecast_reader import (
     resolve_effective_source,
     set_forecast_source,
 )
+from src.services.glucose_series import (
+    GLUCOSE_SERIES_CONTINUITY_GAP_MS,
+    MAX_GLUCOSE_SERIES_DATA_POINTS,
+    MIN_GLUCOSE_SERIES_DATA_POINTS,
+    get_resolution_aware_glucose_series,
+)
 from src.services.integrations.glooko.auth import glooko_login
 from src.services.integrations.glooko.errors import (
     GlookoAuthError,
@@ -255,8 +267,8 @@ logger = get_logger(__name__)
 # Minimum readings for a statistically meaningful previous-period TIR comparison
 _MIN_PREV_PERIOD_READINGS = 10
 
-# Maximum window for date-range queries (31 days)
-_MAX_DATE_RANGE_DAYS = 31
+# Maximum window supported by V2 dashboard date-range queries.
+_MAX_DATE_RANGE_DAYS = 90
 
 
 def _validate_date_range(
@@ -1036,6 +1048,87 @@ async def get_glucose_history(
     return GlucoseHistoryResponse(
         readings=[GlucoseReadingResponse.model_validate(r) for r in readings],
         count=len(readings),
+    )
+
+
+@router.get(
+    "/glucose/series",
+    response_model=GlucoseSeriesResponse,
+    responses={
+        200: {"description": "Resolution aware glucose timeline series"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Permission denied"},
+        422: {"model": ErrorResponse, "description": "Invalid series request"},
+    },
+)
+@limiter.limit("30/minute")
+async def get_glucose_series(
+    request: Request,
+    current_user: DiabeticOrAdminUser,
+    db: AsyncSession = Depends(get_db),
+    start: datetime = Query(
+        ...,
+        description="Exact start of the timeline window (ISO 8601 with offset)",
+    ),
+    end: datetime = Query(
+        ...,
+        description="Exact exclusive end of the timeline window (ISO 8601 with offset)",
+    ),
+    max_data_points: int = Query(
+        ...,
+        alias="maxDataPoints",
+        ge=MIN_GLUCOSE_SERIES_DATA_POINTS,
+        le=MAX_GLUCOSE_SERIES_DATA_POINTS,
+        description="Maximum readings returned, usually the CSS plot width",
+    ),
+    include_secondary: bool = Query(
+        default=False,
+        description="Include secondary CGM sources. Off sources remain excluded.",
+    ),
+) -> GlucoseSeriesResponse:
+    """Return a bounded glucose series optimized for V2 timeline rendering."""
+    date_range = _validate_date_range(start, end)
+    if date_range is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Both 'start' and 'end' must be provided together.",
+        )
+
+    result = await get_resolution_aware_glucose_series(
+        db,
+        current_user.id,
+        start=date_range[0],
+        end=date_range[1],
+        max_data_points=max_data_points,
+        include_secondary=include_secondary,
+    )
+    readings = [GlucoseReadingResponse.model_validate(row) for row in result.readings]
+
+    return GlucoseSeriesResponse(
+        readings=readings,
+        metadata=GlucoseSeriesMetadata(
+            requested_max_data_points=max_data_points,
+            raw_reading_count=result.raw_reading_count,
+            returned_point_count=len(readings),
+            reduction_mode=result.reduction_mode,
+            bucket_interval_ms=result.bucket_interval_ms,
+            timeline_revision=result.timeline_revision,
+            applied_window=GlucoseSeriesWindow(
+                start=date_range[0],
+                end=date_range[1],
+            ),
+            source_selection=GlucoseSeriesSourceSelection(
+                requested=("primary_and_secondary" if include_secondary else "primary"),
+                excluded_sources=result.excluded_sources,
+            ),
+            continuity=GlucoseSeriesContinuity(
+                max_gap_ms=GLUCOSE_SERIES_CONTINUITY_GAP_MS,
+                gaps=[
+                    GlucoseSeriesContinuityGap(start=gap_start, end=gap_end)
+                    for gap_start, gap_end in result.continuity_gaps
+                ],
+            ),
+        ),
     )
 
 
@@ -4140,6 +4233,12 @@ async def get_glucose_percentiles(
         max_length=50,
         description="IANA timezone for hour grouping (e.g. America/Chicago)",
     ),
+    start: datetime | None = Query(
+        default=None, description="Start of exact date range (ISO 8601, UTC)"
+    ),
+    end: datetime | None = Query(
+        default=None, description="End of exact date range (ISO 8601, UTC)"
+    ),
     include_secondary: bool = Query(
         default=False,
         description="Include secondary CGM sources (Story 43.10). Off by default.",
@@ -4149,7 +4248,8 @@ async def get_glucose_percentiles(
 
     Returns 10th, 25th, 50th, 75th, and 90th percentile glucose values
     grouped by hour of day in the specified timezone.
-    Requires at least 7 days of data.
+    The days form requires at least 7 days. Exact start and end values support
+    the V2 dashboard's selected range, including its 2 day minimum.
     By default profiles the primary CGM source only (Story 43.10).
     """
     # Validate timezone
@@ -4161,24 +4261,34 @@ async def get_glucose_percentiles(
             detail=f"Invalid timezone: {tz}",
         ) from e
 
-    cutoff = datetime.now(UTC) - timedelta(days=days)
+    date_range = _validate_date_range(start, end)
+    if date_range is not None:
+        cutoff, upper = date_range
+        period_days = max(1, math.ceil((upper - cutoff).total_seconds() / 86400))
+    else:
+        cutoff = datetime.now(UTC) - timedelta(days=days)
+        upper = None
+        period_days = days
     excluded = await get_excluded_cgm_sources(
         db, current_user.id, include_secondary=include_secondary
     )
 
     # Fetch readings with a hard row cap to prevent memory issues
+    conditions = [
+        GlucoseReading.user_id == current_user.id,
+        GlucoseReading.reading_timestamp >= cutoff,
+        GlucoseReading.value >= 20,
+        GlucoseReading.value <= 500,
+        *glucose_source_exclusion_clause(excluded),
+    ]
+    if upper is not None:
+        conditions.append(GlucoseReading.reading_timestamp < upper)
     result = await db.execute(
         select(
             GlucoseReading.reading_timestamp,
             GlucoseReading.value,
         )
-        .where(
-            GlucoseReading.user_id == current_user.id,
-            GlucoseReading.reading_timestamp >= cutoff,
-            GlucoseReading.value >= 20,
-            GlucoseReading.value <= 500,
-            *glucose_source_exclusion_clause(excluded),
-        )
+        .where(*conditions)
         .order_by(GlucoseReading.reading_timestamp)
         .limit(_AGP_MAX_ROWS)
     )
@@ -4210,7 +4320,7 @@ async def get_glucose_percentiles(
 
     return GlucosePercentilesResponse(
         buckets=buckets,
-        period_days=days,
+        period_days=period_days,
         readings_count=len(rows),
         is_truncated=len(rows) >= _AGP_MAX_ROWS,
     )

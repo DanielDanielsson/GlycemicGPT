@@ -4395,6 +4395,187 @@
         "title": "GlucoseReadingResponse",
         "type": "object"
       },
+      "GlucoseSeriesContinuity": {
+        "description": "Continuity information retained independently from point reduction.",
+        "properties": {
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/GlucoseSeriesContinuityGap"
+            },
+            "title": "Gaps",
+            "type": "array"
+          },
+          "max_gap_ms": {
+            "minimum": 1.0,
+            "title": "Max Gap Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_gap_ms",
+          "gaps"
+        ],
+        "title": "GlucoseSeriesContinuity",
+        "type": "object"
+      },
+      "GlucoseSeriesContinuityGap": {
+        "description": "A real gap between consecutive raw sensor readings.",
+        "properties": {
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "GlucoseSeriesContinuityGap",
+        "type": "object"
+      },
+      "GlucoseSeriesMetadata": {
+        "description": "Resolution and source metadata for a glucose series response.",
+        "properties": {
+          "applied_window": {
+            "$ref": "#/components/schemas/GlucoseSeriesWindow"
+          },
+          "bucket_interval_ms": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bucket Interval Ms"
+          },
+          "continuity": {
+            "$ref": "#/components/schemas/GlucoseSeriesContinuity"
+          },
+          "raw_reading_count": {
+            "minimum": 0.0,
+            "title": "Raw Reading Count",
+            "type": "integer"
+          },
+          "reduction_mode": {
+            "enum": [
+              "raw",
+              "reduced"
+            ],
+            "title": "Reduction Mode",
+            "type": "string"
+          },
+          "requested_max_data_points": {
+            "maximum": 2000.0,
+            "minimum": 4.0,
+            "title": "Requested Max Data Points",
+            "type": "integer"
+          },
+          "returned_point_count": {
+            "maximum": 2000.0,
+            "minimum": 0.0,
+            "title": "Returned Point Count",
+            "type": "integer"
+          },
+          "source_selection": {
+            "$ref": "#/components/schemas/GlucoseSeriesSourceSelection"
+          },
+          "timeline_revision": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Timeline Revision",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requested_max_data_points",
+          "raw_reading_count",
+          "returned_point_count",
+          "reduction_mode",
+          "timeline_revision",
+          "applied_window",
+          "source_selection",
+          "continuity"
+        ],
+        "title": "GlucoseSeriesMetadata",
+        "type": "object"
+      },
+      "GlucoseSeriesResponse": {
+        "description": "Resolution aware glucose readings for timeline rendering.",
+        "properties": {
+          "metadata": {
+            "$ref": "#/components/schemas/GlucoseSeriesMetadata"
+          },
+          "readings": {
+            "items": {
+              "$ref": "#/components/schemas/GlucoseReadingResponse"
+            },
+            "title": "Readings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "readings",
+          "metadata"
+        ],
+        "title": "GlucoseSeriesResponse",
+        "type": "object"
+      },
+      "GlucoseSeriesSourceSelection": {
+        "description": "Requested and resolved CGM source filtering for a glucose series.",
+        "properties": {
+          "excluded_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Excluded Sources",
+            "type": "array"
+          },
+          "requested": {
+            "enum": [
+              "primary",
+              "primary_and_secondary"
+            ],
+            "title": "Requested",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requested",
+          "excluded_sources"
+        ],
+        "title": "GlucoseSeriesSourceSelection",
+        "type": "object"
+      },
+      "GlucoseSeriesWindow": {
+        "description": "Exact UTC window applied to a glucose series request.",
+        "properties": {
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "GlucoseSeriesWindow",
+        "type": "object"
+      },
       "GlucoseStatsResponse": {
         "description": "Response schema for aggregate glucose statistics (Story 30.1).",
         "properties": {
@@ -11323,7 +11504,7 @@
     "description": "AI-powered diabetes management API",
     "title": "GlycemicGPT API",
     "version": "0.1.0",
-    "x-contract-version": "3"
+    "x-contract-version": "4"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -18579,7 +18760,7 @@
     },
     "/api/integrations/glucose/percentiles": {
       "get": {
-        "description": "Get AGP (Ambulatory Glucose Profile) percentile bands.\n\nReturns 10th, 25th, 50th, 75th, and 90th percentile glucose values\ngrouped by hour of day in the specified timezone.\nRequires at least 7 days of data.\nBy default profiles the primary CGM source only (Story 43.10).",
+        "description": "Get AGP (Ambulatory Glucose Profile) percentile bands.\n\nReturns 10th, 25th, 50th, 75th, and 90th percentile glucose values\ngrouped by hour of day in the specified timezone.\nThe days form requires at least 7 days. Exact start and end values support\nthe V2 dashboard's selected range, including its 2 day minimum.\nBy default profiles the primary CGM source only (Story 43.10).",
         "operationId": "get_glucose_percentiles_api_integrations_glucose_percentiles_get",
         "parameters": [
           {
@@ -18607,6 +18788,44 @@
               "maxLength": 50,
               "title": "Tz",
               "type": "string"
+            }
+          },
+          {
+            "description": "Start of exact date range (ISO 8601, UTC)",
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start of exact date range (ISO 8601, UTC)",
+              "title": "Start"
+            }
+          },
+          {
+            "description": "End of exact date range (ISO 8601, UTC)",
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End of exact date range (ISO 8601, UTC)",
+              "title": "End"
             }
           },
           {
@@ -18681,6 +18900,125 @@
           }
         },
         "summary": "Get Glucose Percentiles",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/integrations/glucose/series": {
+      "get": {
+        "description": "Return a bounded glucose series optimized for V2 timeline rendering.",
+        "operationId": "get_glucose_series_api_integrations_glucose_series_get",
+        "parameters": [
+          {
+            "description": "Exact start of the timeline window (ISO 8601 with offset)",
+            "in": "query",
+            "name": "start",
+            "required": true,
+            "schema": {
+              "description": "Exact start of the timeline window (ISO 8601 with offset)",
+              "format": "date-time",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact exclusive end of the timeline window (ISO 8601 with offset)",
+            "in": "query",
+            "name": "end",
+            "required": true,
+            "schema": {
+              "description": "Exact exclusive end of the timeline window (ISO 8601 with offset)",
+              "format": "date-time",
+              "title": "End",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Maximum readings returned, usually the CSS plot width",
+            "in": "query",
+            "name": "maxDataPoints",
+            "required": true,
+            "schema": {
+              "description": "Maximum readings returned, usually the CSS plot width",
+              "maximum": 2000,
+              "minimum": 4,
+              "title": "Maxdatapoints",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Include secondary CGM sources. Off sources remain excluded.",
+            "in": "query",
+            "name": "include_secondary",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Include secondary CGM sources. Off sources remain excluded.",
+              "title": "Include Secondary",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "glycemicgpt_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Glycemicgpt Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlucoseSeriesResponse"
+                }
+              }
+            },
+            "description": "Resolution aware glucose timeline series"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not authenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Permission denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid series request"
+          }
+        },
+        "summary": "Get Glucose Series",
         "tags": [
           "integrations"
         ]
