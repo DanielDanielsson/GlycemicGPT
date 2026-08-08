@@ -10,6 +10,7 @@ import {
   buildGlookoAvailability,
   buildGlookoStatus,
   buildGlucoseHistoryResponse,
+  buildGlucoseSeriesResponse,
   buildGlucosePercentiles,
   buildGlucoseStats,
   buildInsulinSummary,
@@ -781,6 +782,44 @@ export const handlers = [
   http.get(`${API}/integrations/glucose/history`, ({ request }) => {
     const { data } = snapshot();
     return ok(buildGlucoseHistoryResponse(data, requestParams(request)));
+  }),
+
+  http.get(`${API}/integrations/glucose/series`, ({ request }) => {
+    const params = requestParams(request);
+    const start = params.get("start");
+    const end = params.get("end");
+    const maxDataPointsValue = params.get("maxDataPoints");
+    const includeSecondaryValue = params.get("include_secondary");
+    const startMs = start ? new Date(start).getTime() : Number.NaN;
+    const endMs = end ? new Date(end).getTime() : Number.NaN;
+    const maxDataPoints = Number(maxDataPointsValue);
+    const validIncludeSecondary =
+      includeSecondaryValue === null ||
+      ["true", "false", "1", "0"].includes(includeSecondaryValue);
+
+    if (
+      !start ||
+      !end ||
+      maxDataPointsValue === null ||
+      !Number.isFinite(startMs) ||
+      !Number.isFinite(endMs) ||
+      endMs <= startMs ||
+      endMs - startMs > 90 * 24 * 60 * 60 * 1000 ||
+      !Number.isInteger(maxDataPoints) ||
+      maxDataPoints < 4 ||
+      maxDataPoints > 2_000 ||
+      !validIncludeSecondary
+    ) {
+      return HttpResponse.json(
+        { detail: "Invalid glucose series query" },
+        { status: 422 },
+      );
+    }
+
+    if (includeSecondaryValue === "1") params.set("include_secondary", "true");
+    if (includeSecondaryValue === "0") params.set("include_secondary", "false");
+    const { data } = snapshot();
+    return ok(buildGlucoseSeriesResponse(data, params));
   }),
 
   http.get(`${API}/integrations/glucose/stats`, ({ request }) => {

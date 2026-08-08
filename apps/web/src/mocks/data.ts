@@ -9,6 +9,7 @@ import type {
   ForecastSourcePreference,
   GlucoseHistoryReading,
   GlucoseHistoryResponse,
+  GlucoseSeriesResponse,
   GlucosePercentilesResponse,
   GlucoseStats,
   GlookoAvailability,
@@ -36,6 +37,8 @@ import type {
   TargetGlucoseRangeResponse,
   TimeInRangeDetailStats,
 } from "@/lib/api";
+import { resolveGlucoseSeriesIntervalMs } from "@/lib/glucose/series-resolution";
+import type { NormalizedHistoryWindow } from "@/lib/query/dashboard";
 
 import type {
   MockCgmSource,
@@ -53,6 +56,7 @@ import {
 
 const MINUTE_MS = 60_000;
 const FIVE_MINUTES_MS = 5 * MINUTE_MS;
+const MOCK_GLUCOSE_CONTINUITY_GAP_MS = 15 * MINUTE_MS;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 const MOCK_DAILY_BRIEFS_STORAGE_KEY = "glycemicgpt:mock-daily-briefs";
 const MOCK_INSIGHT_RESPONSES_STORAGE_KEY = "glycemicgpt:mock-insight-responses";
@@ -999,6 +1003,158 @@ export function buildGlucoseHistoryResponse(
   return { readings, count: readings.length };
 }
 
+function mockSeriesFingerprint(value: string): string {
+  return Array.from({ length: 8 }, (_, seed) => {
+    let hash = 0x811c9dc5 ^ seed;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(16).padStart(8, "0");
+  }).join("");
+}
+
+function mockGlucoseReadingKey(reading: GlucoseHistoryReading): string {
+  return `${reading.reading_timestamp}|${reading.value}|${reading.source}`;
+}
+
+function reduceMockGlucoseSeries(
+  readings: GlucoseHistoryReading[],
+  window: NormalizedHistoryWindow,
+  intervalMs: number,
+): GlucoseHistoryReading[] {
+  const startMs = new Date(window.from).getTime();
+  const buckets = new Map<number, GlucoseHistoryReading[]>();
+
+  for (const reading of readings) {
+    const bucketIndex = Math.floor(
+      (new Date(reading.reading_timestamp).getTime() - startMs) / intervalMs,
+    );
+    const bucket = buckets.get(bucketIndex) ?? [];
+    bucket.push(reading);
+    buckets.set(bucketIndex, bucket);
+  }
+
+  const selected = new Map<string, GlucoseHistoryReading>();
+  for (const bucket of buckets.values()) {
+    const first = bucket[0];
+    const last = bucket[bucket.length - 1];
+    let minimum = first;
+    let maximum = first;
+    for (const reading of bucket) {
+      if (reading.value < minimum.value) minimum = reading;
+      if (reading.value > maximum.value) maximum = reading;
+    }
+    for (const reading of [first, minimum, maximum, last]) {
+      selected.set(mockGlucoseReadingKey(reading), reading);
+    }
+  }
+
+  return [...selected.values()].sort(
+    (left, right) =>
+      new Date(left.reading_timestamp).getTime() -
+      new Date(right.reading_timestamp).getTime(),
+  );
+}
+
+export function buildGlucoseSeriesResponse(
+  snapshot: MockDataSnapshot,
+  params: URLSearchParams,
+): GlucoseSeriesResponse {
+  const start = new Date(params.get("start") as string).toISOString();
+  const end = new Date(params.get("end") as string).toISOString();
+  const maxDataPoints = Number(params.get("maxDataPoints"));
+  const includeSecondary = params.get("include_secondary") === "true";
+  const startMs = new Date(start).getTime();
+  const endMs = new Date(end).getTime();
+  const primarySource = snapshot.glucoseHistory[0]?.source ?? null;
+  const excludedSources = includeSecondary
+    ? []
+    : [
+        ...new Set(
+          snapshot.glucoseHistory
+            .map((reading) => reading.source)
+            .filter((source) => source !== primarySource),
+        ),
+      ].sort();
+  const rawReadings = snapshot.glucoseHistory
+    .filter((reading) => {
+      const timestamp = new Date(reading.reading_timestamp).getTime();
+      const sourceSelected =
+        includeSecondary ||
+        primarySource === null ||
+        reading.source === primarySource;
+      return sourceSelected && timestamp >= startMs && timestamp < endMs;
+    })
+    .sort(
+      (left, right) =>
+        new Date(left.reading_timestamp).getTime() -
+          new Date(right.reading_timestamp).getTime() ||
+        left.source.localeCompare(right.source) ||
+        left.value - right.value,
+    );
+  const window = { from: start, to: end };
+  const reductionMode = rawReadings.length <= maxDataPoints ? "raw" : "reduced";
+  const bucketIntervalMs =
+    reductionMode === "raw"
+      ? null
+      : resolveGlucoseSeriesIntervalMs(window, maxDataPoints);
+  const readings =
+    bucketIntervalMs === null
+      ? rawReadings
+      : reduceMockGlucoseSeries(rawReadings, window, bucketIntervalMs);
+  const continuityGaps = rawReadings.slice(1).flatMap((reading, index) => {
+    const previous = rawReadings[index];
+    const intervalMs =
+      new Date(reading.reading_timestamp).getTime() -
+      new Date(previous.reading_timestamp).getTime();
+    return intervalMs > MOCK_GLUCOSE_CONTINUITY_GAP_MS
+      ? [
+          {
+            start: previous.reading_timestamp,
+            end: reading.reading_timestamp,
+          },
+        ]
+      : [];
+  });
+  const fingerprintInput = JSON.stringify({
+    start,
+    end,
+    maxDataPoints,
+    includeSecondary,
+    excludedSources,
+    reductionMode,
+    bucketIntervalMs,
+    rawReadings: rawReadings.map((reading) => [
+      reading.reading_timestamp,
+      reading.value,
+      reading.source,
+      reading.received_at,
+    ]),
+  });
+
+  return {
+    readings,
+    metadata: {
+      requested_max_data_points: maxDataPoints,
+      raw_reading_count: rawReadings.length,
+      returned_point_count: readings.length,
+      reduction_mode: reductionMode,
+      bucket_interval_ms: bucketIntervalMs,
+      timeline_revision: mockSeriesFingerprint(fingerprintInput),
+      applied_window: { start, end },
+      source_selection: {
+        requested: includeSecondary ? "primary_and_secondary" : "primary",
+        excluded_sources: excludedSources,
+      },
+      continuity: {
+        max_gap_ms: MOCK_GLUCOSE_CONTINUITY_GAP_MS,
+        gaps: continuityGaps,
+      },
+    },
+  };
+}
+
 export function buildPumpEventHistoryResponse(
   snapshot: MockDataSnapshot,
   params: URLSearchParams,
@@ -1136,11 +1292,28 @@ export function buildGlucosePercentiles(
   snapshot: MockDataSnapshot,
   params: URLSearchParams,
 ): GlucosePercentilesResponse {
+  const requestedStart = params.get("start");
+  const requestedEnd = params.get("end");
   const days = Number(params.get("days") ?? "14");
-  const start = snapshot.now.getTime() - days * DAY_MS;
-  const readings = snapshot.glucoseHistory.filter(
-    (reading) => new Date(reading.reading_timestamp).getTime() >= start,
-  );
+  const readings =
+    requestedStart && requestedEnd
+      ? filterReadings(snapshot, params)
+      : snapshot.glucoseHistory.filter(
+          (reading) =>
+            new Date(reading.reading_timestamp).getTime() >=
+            snapshot.now.getTime() - days * DAY_MS,
+        );
+  const periodDays =
+    requestedStart && requestedEnd
+      ? Math.max(
+          1,
+          Math.ceil(
+            (new Date(requestedEnd).getTime() -
+              new Date(requestedStart).getTime()) /
+              DAY_MS,
+          ),
+        )
+      : Math.min(days, MOCK_CGM_BACKFILL_MAX_DAYS);
   const buckets = Array.from({ length: 24 }, (_, hour) => {
     const values = readings
       .filter(
@@ -1160,9 +1333,9 @@ export function buildGlucosePercentiles(
 
   return {
     buckets,
-    period_days: Math.min(days, MOCK_CGM_BACKFILL_MAX_DAYS),
+    period_days: periodDays,
     readings_count: readings.length,
-    is_truncated: days > MOCK_CGM_BACKFILL_MAX_DAYS,
+    is_truncated: periodDays > MOCK_CGM_BACKFILL_MAX_DAYS,
   };
 }
 
