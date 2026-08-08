@@ -34,7 +34,10 @@ from src.services.integrations.nightscout.scheduler import (
     _is_due,
     run_nightscout_sync_all_users,
 )
-from src.services.integrations.nightscout.sync import SyncResult
+from src.services.integrations.nightscout.sync import (
+    NIGHTSCOUT_CREDENTIAL_DECRYPTION_ERROR,
+    SyncResult,
+)
 
 # ---------------------------------------------------------------------------
 # _is_due: the discovery predicate
@@ -275,6 +278,39 @@ class TestRunNightscoutSyncAllUsers:
             await run_nightscout_sync_all_users()
 
         assert synced_for_test_user == [ok_id]
+
+    @pytest.mark.asyncio
+    async def test_undecryptable_credentials_are_paused_before_parallel_sync(
+        self, scheduler_ctx
+    ):
+        """A rotated key is classified in bulk without consuming a sync slot."""
+        session, user_id = scheduler_ctx
+        valid = _mk_connection(user_id, name="valid")
+        broken = _mk_connection(user_id, name="broken")
+        broken.encrypted_credential = "not-valid-fernet"
+        session.add_all([valid, broken])
+        await session.commit()
+        valid_id = valid.id
+        broken_id = broken.id
+
+        synced_for_test_user: list[uuid.UUID] = []
+
+        async def fake_sync(_session, conn):
+            if conn.user_id == user_id:
+                synced_for_test_user.append(conn.id)
+            return _ok_result(conn.id)
+
+        with patch(
+            "src.services.integrations.nightscout.scheduler.sync_nightscout_for_connection",
+            side_effect=fake_sync,
+        ):
+            await run_nightscout_sync_all_users()
+
+        await session.refresh(broken)
+        assert synced_for_test_user == [valid_id]
+        assert broken.id == broken_id
+        assert broken.last_sync_status == NightscoutSyncStatus.AUTH_FAILED
+        assert broken.last_sync_error == NIGHTSCOUT_CREDENTIAL_DECRYPTION_ERROR
 
     @pytest.mark.asyncio
     async def test_paused_statuses_set_is_minimal(self):

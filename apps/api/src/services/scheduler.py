@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from src.config import settings
 from src.database import get_session_maker
@@ -33,7 +33,11 @@ from src.models.medtronic_connect_state import (
 from src.models.tandem_sync_state import TandemSyncState
 from src.services.daily_brief import generate_briefs_all_users
 from src.services.data_gap_alerts import DataGapAction, evaluate_data_gap_for_user
-from src.services.dexcom_sync import DexcomSyncError, sync_dexcom_for_user
+from src.services.dexcom_sync import (
+    DEXCOM_CREDENTIAL_DECRYPTION_ERROR,
+    DexcomSyncError,
+    sync_dexcom_for_user,
+)
 from src.services.integrations.glooko.sync import (
     GlookoSyncRunError,
     sync_glooko_for_user,
@@ -67,11 +71,16 @@ async def sync_all_dexcom_users() -> None:
         result = await db.execute(
             select(IntegrationCredential).where(
                 IntegrationCredential.integration_type == IntegrationType.DEXCOM,
-                IntegrationCredential.status.in_(
-                    [
-                        IntegrationStatus.CONNECTED,
-                        IntegrationStatus.ERROR,  # Retry errors
-                    ]
+                or_(
+                    IntegrationCredential.status == IntegrationStatus.CONNECTED,
+                    and_(
+                        IntegrationCredential.status == IntegrationStatus.ERROR,
+                        or_(
+                            IntegrationCredential.last_error.is_(None),
+                            IntegrationCredential.last_error
+                            != DEXCOM_CREDENTIAL_DECRYPTION_ERROR,
+                        ),
+                    ),
                 ),
             )
         )

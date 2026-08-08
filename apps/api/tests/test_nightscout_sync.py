@@ -33,6 +33,7 @@ from src.services.integrations.nightscout.errors import (
     NightscoutRateLimitError,
 )
 from src.services.integrations.nightscout.sync import (
+    NIGHTSCOUT_CREDENTIAL_DECRYPTION_ERROR,
     _resolve_since,
     sync_nightscout_for_connection,
 )
@@ -214,6 +215,28 @@ class TestSyncOutcome:
         assert conn.last_synced_at is original_cursor  # unchanged
         assert conn.last_sync_status == NightscoutSyncStatus.AUTH_FAILED
         assert conn.last_sync_error == "401 unauthorized"
+
+    @pytest.mark.asyncio
+    async def test_undecryptable_credential_pauses_scheduler_retries(self, sync_ctx):
+        session, conn = sync_ctx
+
+        with (
+            patch(
+                "src.services.integrations.nightscout.sync.decrypt_optional_credential",
+                side_effect=ValueError("invalid encryption key"),
+            ),
+            patch(
+                "src.services.integrations.nightscout.sync.NightscoutClient.create",
+                new=AsyncMock(),
+            ) as create_client,
+        ):
+            result = await sync_nightscout_for_connection(session, conn)
+
+        assert result.status == NightscoutSyncStatus.AUTH_FAILED
+        assert result.error == NIGHTSCOUT_CREDENTIAL_DECRYPTION_ERROR
+        assert conn.last_sync_status == NightscoutSyncStatus.AUTH_FAILED
+        assert conn.last_sync_error == result.error
+        create_client.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_rate_limit_maps_to_rate_limited(self, sync_ctx):
