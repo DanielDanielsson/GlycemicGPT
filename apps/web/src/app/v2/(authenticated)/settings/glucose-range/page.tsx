@@ -201,6 +201,8 @@ export default function GlucoseRangePage() {
       setUrgentHigh(toDisplay(updated.urgent_high));
       await invalidateResources([
         "glucose-range",
+        "glucose-percentiles",
+        "glucose-summary",
         "glucose-stats",
         "time-in-range",
       ]);
@@ -233,6 +235,8 @@ export default function GlucoseRangePage() {
       setUrgentHigh(toDisplay(DEFAULTS.urgent_high));
       await invalidateResources([
         "glucose-range",
+        "glucose-percentiles",
+        "glucose-summary",
         "glucose-stats",
         "time-in-range",
       ]);

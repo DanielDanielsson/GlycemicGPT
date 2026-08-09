@@ -2405,6 +2405,27 @@
         "title": "DailyBriefResponse",
         "type": "object"
       },
+      "DashboardGlucoseSummaryResponse": {
+        "description": "Atomic V2 glucose statistics and detailed time in range snapshot.",
+        "properties": {
+          "metadata": {
+            "$ref": "#/components/schemas/GlucoseAggregationMetadata"
+          },
+          "statistics": {
+            "$ref": "#/components/schemas/GlucoseStatsResponse"
+          },
+          "time_in_range": {
+            "$ref": "#/components/schemas/TimeInRangeDetailResponse"
+          }
+        },
+        "required": [
+          "statistics",
+          "time_in_range",
+          "metadata"
+        ],
+        "title": "DashboardGlucoseSummaryResponse",
+        "type": "object"
+      },
       "DataPurgeRequest": {
         "description": "Request schema for data purge.\n\nThe confirmation_text must be exactly \"DELETE\" (case-sensitive)\nto proceed with the purge.",
         "properties": {
@@ -4280,6 +4301,121 @@
         "title": "GlookoSyncSettingsRequest",
         "type": "object"
       },
+      "GlucoseAggregationMetadata": {
+        "description": "Accuracy, identity, and input metadata for derived glucose data.",
+        "properties": {
+          "applied_window": {
+            "$ref": "#/components/schemas/GlucoseAggregationWindow"
+          },
+          "calculation_revision": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Calculation Revision",
+            "type": "string"
+          },
+          "comparison_window": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GlucoseAggregationWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "glucose_revision": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Glucose Revision",
+            "type": "string"
+          },
+          "is_truncated": {
+            "title": "Is Truncated",
+            "type": "boolean"
+          },
+          "readings_count": {
+            "minimum": 0.0,
+            "title": "Readings Count",
+            "type": "integer"
+          },
+          "source_selection": {
+            "$ref": "#/components/schemas/GlucoseAggregationSourceSelection"
+          },
+          "target_range": {
+            "$ref": "#/components/schemas/GlucoseTargetRangeSnapshot"
+          },
+          "target_range_revision": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Target Range Revision",
+            "type": "string"
+          },
+          "time_zone": {
+            "title": "Time Zone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "applied_window",
+          "time_zone",
+          "readings_count",
+          "is_truncated",
+          "glucose_revision",
+          "target_range_revision",
+          "calculation_revision",
+          "source_selection",
+          "target_range"
+        ],
+        "title": "GlucoseAggregationMetadata",
+        "type": "object"
+      },
+      "GlucoseAggregationSourceSelection": {
+        "description": "Requested and resolved source filtering for a derived calculation.",
+        "properties": {
+          "excluded_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Excluded Sources",
+            "type": "array"
+          },
+          "requested": {
+            "enum": [
+              "primary",
+              "primary_and_secondary"
+            ],
+            "title": "Requested",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requested",
+          "excluded_sources"
+        ],
+        "title": "GlucoseAggregationSourceSelection",
+        "type": "object"
+      },
+      "GlucoseAggregationWindow": {
+        "description": "Exact UTC window applied to a derived glucose calculation.",
+        "properties": {
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "GlucoseAggregationWindow",
+        "type": "object"
+      },
       "GlucoseHistoryResponse": {
         "description": "Response schema for glucose history.",
         "properties": {
@@ -4316,9 +4452,12 @@
           },
           "is_truncated": {
             "default": false,
-            "description": "True if readings were capped by server row limit; percentiles may be approximate",
+            "description": "False for complete results. Incomplete aggregates fail instead of returning partial data.",
             "title": "Is Truncated",
             "type": "boolean"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/GlucoseAggregationMetadata"
           },
           "period_days": {
             "description": "Number of days analyzed",
@@ -4336,7 +4475,8 @@
         "required": [
           "buckets",
           "period_days",
-          "readings_count"
+          "readings_count",
+          "metadata"
         ],
         "title": "GlucosePercentilesResponse",
         "type": "object"
@@ -4651,6 +4791,43 @@
           "period_minutes"
         ],
         "title": "GlucoseStatsResponse",
+        "type": "object"
+      },
+      "GlucoseTargetRangeSnapshot": {
+        "description": "Configured thresholds used by the response snapshot.",
+        "properties": {
+          "high": {
+            "maximum": 500.0,
+            "minimum": 20.0,
+            "title": "High",
+            "type": "number"
+          },
+          "low": {
+            "maximum": 500.0,
+            "minimum": 20.0,
+            "title": "Low",
+            "type": "number"
+          },
+          "urgent_high": {
+            "maximum": 500.0,
+            "minimum": 20.0,
+            "title": "Urgent High",
+            "type": "number"
+          },
+          "urgent_low": {
+            "maximum": 500.0,
+            "minimum": 20.0,
+            "title": "Urgent Low",
+            "type": "number"
+          }
+        },
+        "required": [
+          "urgent_low",
+          "low",
+          "high",
+          "urgent_high"
+        ],
+        "title": "GlucoseTargetRangeSnapshot",
         "type": "object"
       },
       "GlucoseUnit": {
@@ -11504,7 +11681,7 @@
     "description": "AI-powered diabetes management API",
     "title": "GlycemicGPT API",
     "version": "0.1.0",
-    "x-contract-version": "4"
+    "x-contract-version": "6"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -18605,6 +18782,125 @@
           }
         },
         "summary": "Get Current Glucose",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/integrations/glucose/dashboard-summary": {
+      "get": {
+        "description": "Return one coherent V2 summary snapshot for an exact window.",
+        "operationId": "get_dashboard_glucose_summary_api_integrations_glucose_dashboard_summary_get",
+        "parameters": [
+          {
+            "description": "Start of exact date range (ISO 8601, UTC)",
+            "in": "query",
+            "name": "start",
+            "required": true,
+            "schema": {
+              "description": "Start of exact date range (ISO 8601, UTC)",
+              "format": "date-time",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          {
+            "description": "End of exact date range (ISO 8601, UTC)",
+            "in": "query",
+            "name": "end",
+            "required": true,
+            "schema": {
+              "description": "End of exact date range (ISO 8601, UTC)",
+              "format": "date-time",
+              "title": "End",
+              "type": "string"
+            }
+          },
+          {
+            "description": "IANA timezone associated with the selected dashboard range",
+            "in": "query",
+            "name": "tz",
+            "required": false,
+            "schema": {
+              "default": "UTC",
+              "description": "IANA timezone associated with the selected dashboard range",
+              "maxLength": 50,
+              "title": "Tz",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Include secondary CGM sources. Off by default.",
+            "in": "query",
+            "name": "include_secondary",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Include secondary CGM sources. Off by default.",
+              "title": "Include Secondary",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "glycemicgpt_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Glycemicgpt Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardGlucoseSummaryResponse"
+                }
+              }
+            },
+            "description": "Atomic V2 glucose statistics and time in range"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not authenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Permission denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Dashboard Glucose Summary",
         "tags": [
           "integrations"
         ]

@@ -70,6 +70,47 @@ describe("mock API handlers", () => {
     expect(body.readings_count).toBeGreaterThan(0);
   });
 
+  it("returns an atomic dashboard glucose summary for an exact range", async () => {
+    const end = new Date();
+    const start = new Date(end.getTime() - 2 * 24 * 60 * 60 * 1000);
+    const params = new URLSearchParams({
+      start: start.toISOString(),
+      end: end.toISOString(),
+      tz: "Europe/Stockholm",
+    });
+    const response = await fetch(
+      `http://localhost:3003/api/integrations/glucose/dashboard-summary?${params}`,
+    );
+    const body = (await response.json()) as {
+      statistics: { readings_count: number };
+      time_in_range: { readings_count: number };
+      metadata: { time_zone: string; is_truncated: boolean };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.statistics.readings_count).toBeGreaterThan(0);
+    expect(body.time_in_range.readings_count).toBe(
+      body.statistics.readings_count,
+    );
+    expect(body.metadata).toMatchObject({
+      time_zone: "Europe/Stockholm",
+      is_truncated: false,
+    });
+  });
+
+  it("rejects invalid dashboard summary timezone values", async () => {
+    const params = new URLSearchParams({
+      start: "2026-08-01T00:00:00.000Z",
+      end: "2026-08-03T00:00:00.000Z",
+      tz: "Not/A_Timezone",
+    });
+    const response = await fetch(
+      `http://localhost:3003/api/integrations/glucose/dashboard-summary?${params}`,
+    );
+
+    expect(response.status).toBe(422);
+  });
+
   it("paginates the configured knowledge base documents", async () => {
     const { setMockRuntimeState } = await import("./state");
     setMockRuntimeState({ knowledgeDocumentCount: 45 });

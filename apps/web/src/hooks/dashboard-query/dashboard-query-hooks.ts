@@ -9,6 +9,7 @@ import {
   getBolusReview,
   getBolusReviewByDateRange,
   getCgmSources,
+  getDashboardGlucoseSummaryByDateRange,
   getForecast,
   getGlookoStatus,
   getGlucoseHistory,
@@ -203,9 +204,7 @@ export function useDashboardGlucoseHistory(
   };
 }
 
-export function useDashboardGlucosePercentiles(
-  window?: HistoryWindow | null,
-) {
+export function useDashboardGlucosePercentiles(window?: HistoryWindow | null) {
   const { dashboardTimeRange, timeZone, userId } = useDashboardQueryIdentity();
   const { key: range, normalizedWindow } = resolveDashboardQueryRange(
     window,
@@ -238,10 +237,58 @@ export function useDashboardGlucosePercentiles(
 
   return {
     buckets: query.data?.buckets ?? [],
+    metadata: query.data?.metadata ?? null,
     isLoading: query.isPending && query.fetchStatus === "fetching",
     isUpdating: query.isFetching && hasData,
     isPreviousData: query.isPlaceholderData,
     error: errorMessage(query.error, "Failed to load glucose percentiles"),
+    hasBackgroundError: Boolean(query.error && hasData),
+    refetch,
+  };
+}
+
+export function useDashboardGlucoseSummary(window?: HistoryWindow | null) {
+  const { dashboardTimeRange, timeZone, userId } = useDashboardQueryIdentity();
+  const { key: range, normalizedWindow } = resolveDashboardQueryRange(
+    window,
+    dashboardTimeRange,
+    timeZone,
+  );
+  const query = useQuery({
+    queryKey: dashboardQueryKeys.detail(userId, "glucose-summary", {
+      range,
+      sourceSelection: DASHBOARD_SERVER_SOURCE,
+      timeZone,
+    }),
+    queryFn: () => {
+      if (!normalizedWindow) {
+        throw new Error("Dashboard glucose summary requires a date range");
+      }
+      return getDashboardGlucoseSummaryByDateRange(
+        normalizedWindow.from,
+        normalizedWindow.to,
+        timeZone,
+      );
+    },
+    enabled: Boolean(userId && normalizedWindow),
+    placeholderData: keepPreviousData,
+    refetchOnReconnect: false,
+    staleTime: DASHBOARD_HISTORICAL_STALE_TIME,
+  });
+  const hasData = query.data !== undefined;
+  const refetch = useVoidRefetch(query.refetch);
+
+  return {
+    statistics: query.data?.statistics ?? null,
+    timeInRange: query.data?.time_in_range ?? null,
+    metadata: query.data?.metadata ?? null,
+    isLoading: query.isPending && query.fetchStatus === "fetching",
+    isUpdating: query.isFetching && hasData,
+    isPreviousData: query.isPlaceholderData,
+    error: errorMessage(
+      query.error,
+      "Failed to load dashboard glucose summary",
+    ),
     hasBackgroundError: Boolean(query.error && hasData),
     refetch,
   };
@@ -267,10 +314,7 @@ export function useDashboardGlucoseStats(
     }),
     queryFn: () =>
       normalizedWindow
-        ? getGlucoseStatsByDateRange(
-            normalizedWindow.from,
-            normalizedWindow.to,
-          )
+        ? getGlucoseStatsByDateRange(normalizedWindow.from, normalizedWindow.to)
         : getGlucoseStats(minutes ?? PERIOD_TO_MINUTES_STATS[period]),
     enabled: Boolean(userId),
     placeholderData: keepPreviousData,
@@ -366,7 +410,12 @@ export function useDashboardBolusReview(
             limit,
             timeZone,
           )
-        : getBolusReview(days ?? PERIOD_TO_DAYS[period], limit, offset, timeZone),
+        : getBolusReview(
+            days ?? PERIOD_TO_DAYS[period],
+            limit,
+            offset,
+            timeZone,
+          ),
     enabled: Boolean(userId),
     placeholderData: keepPreviousData,
     refetchOnReconnect: false,

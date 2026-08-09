@@ -2,6 +2,7 @@ import {
   buildActiveAlerts,
   buildBolusReview,
   buildCgmSources,
+  buildDashboardGlucoseSummary,
   buildForecast,
   buildGlucoseHistoryResponse,
   buildGlucosePercentiles,
@@ -178,7 +179,7 @@ describe("mock data generator", () => {
     expect(result.readings_count).toBeLessThan(snapshot.glucoseHistory.length);
   });
 
-  it("derives percentile truncation from an exact date range", () => {
+  it("returns complete percentiles without truncation", () => {
     const now = new Date("2026-07-06T12:00:00.000Z");
     const snapshot = buildMockDataSnapshot(
       { ...baseState, cgmBackfillDays: MOCK_CGM_BACKFILL_MAX_DAYS },
@@ -197,7 +198,72 @@ describe("mock data generator", () => {
     );
 
     expect(result.period_days).toBe(MOCK_CGM_BACKFILL_MAX_DAYS + 1);
-    expect(result.is_truncated).toBe(true);
+    expect(result.is_truncated).toBe(false);
+    expect(result.metadata?.is_truncated).toBe(false);
+  });
+
+  it("groups percentile readings in the requested IANA timezone", () => {
+    const snapshot = {
+      ...buildMockDataSnapshot(baseState, new Date("2026-01-02T00:00:00.000Z")),
+      glucoseHistory: [
+        {
+          value: 120,
+          reading_timestamp: "2026-01-01T00:30:00.000Z",
+          trend: "Flat",
+          trend_rate: 0,
+          received_at: "2026-01-01T00:30:01.000Z",
+          source: "dexcom",
+        },
+      ],
+    };
+    const range = {
+      start: "2026-01-01T00:00:00.000Z",
+      end: "2026-01-02T00:00:00.000Z",
+    };
+
+    const utc = buildGlucosePercentiles(
+      snapshot,
+      new URLSearchParams({ ...range, tz: "UTC" }),
+    );
+    const losAngeles = buildGlucosePercentiles(
+      snapshot,
+      new URLSearchParams({ ...range, tz: "America/Los_Angeles" }),
+    );
+
+    expect(utc.buckets[0]?.count).toBe(1);
+    expect(losAngeles.buckets[16]?.count).toBe(1);
+  });
+
+  it("builds one coherent dashboard summary matching standalone builders", () => {
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    const snapshot = buildMockDataSnapshot(baseState, now);
+    const params = new URLSearchParams({
+      start: "2026-07-04T12:00:00.000Z",
+      end: now.toISOString(),
+      tz: "Europe/Stockholm",
+    });
+
+    const summary = buildDashboardGlucoseSummary(snapshot, params);
+
+    expect(summary.statistics).toEqual(buildGlucoseStats(snapshot, params));
+    expect(summary.time_in_range).toEqual(
+      buildTimeInRangeDetail(snapshot, params),
+    );
+    expect(summary.metadata).toMatchObject({
+      applied_window: {
+        start: "2026-07-04T12:00:00.000Z",
+        end: now.toISOString(),
+      },
+      comparison_window: {
+        start: "2026-07-02T12:00:00.000Z",
+        end: "2026-07-04T12:00:00.000Z",
+      },
+      time_zone: "Europe/Stockholm",
+      is_truncated: false,
+    });
+    expect(summary.metadata.glucose_revision).toHaveLength(64);
+    expect(summary.metadata.target_range_revision).toHaveLength(64);
+    expect(summary.metadata.calculation_revision).toHaveLength(64);
   });
 
   it("supports a one year CGM backfill at five minute cadence", () => {
@@ -220,7 +286,7 @@ describe("mock data generator", () => {
         end: snapshot.glucoseHistory.at(-1)!.reading_timestamp,
       }),
     );
-    expect(stats.readings_count).toBe(snapshot.glucoseHistory.length);
+    expect(stats.readings_count).toBe(snapshot.glucoseHistory.length - 1);
     expect(stats.min_glucose).toBeLessThanOrEqual(stats.max_glucose);
   });
 

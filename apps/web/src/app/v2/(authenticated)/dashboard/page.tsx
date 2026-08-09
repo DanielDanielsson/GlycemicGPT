@@ -32,9 +32,8 @@ import {
   useDashboardConnectionFreshness,
   useDashboardForecast,
   useDashboardGlucoseRange,
-  useDashboardGlucoseStats,
+  useDashboardGlucoseSummary,
   useDashboardPumpStatus,
-  useDashboardTimeInRangeStats,
 } from "@/hooks/dashboard-query";
 import { hasNightscoutPumpHint } from "@/lib/pump/pump-history-context";
 import { invalidateDashboardResources } from "@/lib/query/dashboard";
@@ -62,6 +61,8 @@ function mapLoopStatus(
 function DashboardPageContent() {
   const router = useRouter();
   const dashboardTimeRange = useDashboardTimeRange();
+  const selectionKindRef = useRef(dashboardTimeRange.selection.kind);
+  selectionKindRef.current = dashboardTimeRange.selection.kind;
   const { user, isLoading: isUserLoading } = useUserContext();
   const queryClient = useQueryClient();
   const unit = useGlucoseUnit();
@@ -110,16 +111,22 @@ function DashboardPageContent() {
 
   useEffect(() => {
     if (!user?.id || chartRefreshKey === 0) return;
-    void invalidateDashboardResources(queryClient, user.id, [
+    const resources = [
       "glucose-series",
       "glucose-history",
       "bolus-review",
       "pump-events",
       "pump-status",
       "forecast",
-    ]).catch(() => {
-      // Individual query hooks expose background refresh failures.
-    });
+      ...(selectionKindRef.current === "preset"
+        ? (["glucose-percentiles", "glucose-summary"] as const)
+        : []),
+    ] as const;
+    void invalidateDashboardResources(queryClient, user.id, resources).catch(
+      () => {
+        // Individual query hooks expose background refresh failures.
+      },
+    );
   }, [chartRefreshKey, queryClient, user?.id]);
   // Redirect caregivers to the caregiver-specific dashboard.
   useEffect(() => {
@@ -128,20 +135,13 @@ function DashboardPageContent() {
     }
   }, [user, router]);
   const {
-    stats: tirStats,
-    isLoading: tirLoading,
-    isUpdating: tirUpdating,
-    hasBackgroundError: tirBackgroundError,
-    error: tirError,
-  } = useDashboardTimeInRangeStats("24h", dashboardTimeRange.currentWindow);
-  const {
-    stats: cgmStats,
+    statistics: cgmStats,
+    timeInRange: tirStats,
     isLoading: cgmLoading,
     isUpdating: cgmUpdating,
     hasBackgroundError: cgmBackgroundError,
     error: cgmError,
-    period: cgmPeriod,
-  } = useDashboardGlucoseStats("24h", dashboardTimeRange.currentWindow);
+  } = useDashboardGlucoseSummary(dashboardTimeRange.currentWindow);
   // Prevent flash of diabetic dashboard while caregiver redirect is pending
   if (isUserLoading || user?.role === "caregiver") {
     return null;
@@ -341,11 +341,11 @@ function DashboardPageContent() {
             <CgmSummaryStats
               stats={cgmStats}
               isLoading={cgmLoading}
-              isUpdating={cgmUpdating || tirUpdating}
-              hasBackgroundError={cgmBackgroundError || tirBackgroundError}
+              isUpdating={cgmUpdating}
+              hasBackgroundError={cgmBackgroundError}
               rangeLabel={dashboardTimeRange.label}
               error={cgmError}
-              period={cgmPeriod}
+              period="24h"
               className="h-full"
               unit={unit}
               timeInRange={{
@@ -354,8 +354,8 @@ function DashboardPageContent() {
                 previousBuckets: tirStats?.previous_buckets ?? null,
                 previousReadingsCount:
                   tirStats?.previous_readings_count ?? null,
-                error: tirError,
-                isLoading: tirLoading,
+                error: cgmError,
+                isLoading: cgmLoading,
               }}
             />
             <V2InsulinSummaryStats className="h-full" />

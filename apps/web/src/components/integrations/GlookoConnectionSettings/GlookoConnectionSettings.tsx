@@ -15,6 +15,8 @@ import {
   type GlookoSyncResult,
 } from "@/lib/api";
 import { twMerge } from "@/lib/ui/twMerge";
+import { useDashboardInvalidation } from "@/hooks/dashboard-query";
+import { GLUCOSE_DATA_RESOURCES } from "@/lib/query/dashboard";
 import { PasswordTextInput } from "@/components/PasswordTextInput";
 import { Checkbox } from "@/components/Checkbox";
 import { FeedbackMessage } from "@/components/FeedbackMessage";
@@ -70,6 +72,7 @@ export function GlookoConnectionSettings({
   isOffline,
   onStatusChange,
 }: GlookoConnectionSettingsProps) {
+  const { invalidateResources } = useDashboardInvalidation();
   const [status, setStatus] = useState<GlookoStatus | null>(null);
   const [loaded, setLoaded] = useState(false);
   // True when the initial status fetch failed on a transport/auth error (the
@@ -227,6 +230,7 @@ export function GlookoConnectionSettings({
     setIsSyncing(true);
     try {
       setSyncResult(await syncGlookoNow());
+      await invalidateResources(GLUCOSE_DATA_RESOURCES).catch(() => undefined);
       // The sync itself succeeded; a failed status refresh must not turn that
       // into "Sync failed". Refresh best-effort -- the status reloads anyway.
       try {
@@ -251,7 +255,7 @@ export function GlookoConnectionSettings({
     } finally {
       setIsSyncing(false);
     }
-  }, [applyStatus]);
+  }, [applyStatus, invalidateResources]);
 
   const importHistory = useCallback(async () => {
     setError(null);
@@ -259,6 +263,7 @@ export function GlookoConnectionSettings({
     setIsImporting(true);
     try {
       setSyncResult(await importGlookoHistory());
+      await invalidateResources(GLUCOSE_DATA_RESOURCES).catch(() => undefined);
       try {
         applyStatus(await getGlookoStatus());
       } catch {
@@ -279,7 +284,7 @@ export function GlookoConnectionSettings({
     } finally {
       setIsImporting(false);
     }
-  }, [applyStatus]);
+  }, [applyStatus, invalidateResources]);
 
   // Read-only probe: authenticates and walks the CGM window but never mutates
   // the sync state. User-initiated so the live login only happens when asked.

@@ -5,13 +5,15 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.database import get_db
+from src.database import get_db, get_engine
 from src.main import app
 from src.models.glucose import GlucoseReading, TrendDirection
 from src.models.pump_data import PumpEvent, PumpEventType
+from src.schemas.glucose import GlucoseTargetRangeSnapshot
 
 
 def unique_email(prefix: str = "stats") -> str:
@@ -425,14 +427,56 @@ class TestGlucosePercentiles:
         assert len(data["buckets"]) == 24
         assert data["readings_count"] > 0
 
-    async def test_percentiles_invalid_timezone(self):
+    async def test_percentiles_respect_dst_hour_boundaries(self):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            cookie, user_id = await register_and_login(client)
+            async for db in get_db():
+                for timestamp in (
+                    datetime(2026, 3, 8, 6, 30, tzinfo=UTC),
+                    datetime(2026, 3, 8, 7, 30, tzinfo=UTC),
+                ):
+                    db.add(
+                        GlucoseReading(
+                            user_id=uuid.UUID(user_id),
+                            value=120,
+                            reading_timestamp=timestamp,
+                            trend=TrendDirection.FLAT,
+                            trend_rate=0,
+                            received_at=timestamp,
+                            source="test",
+                        )
+                    )
+                await db.commit()
+                break
+
+            response = await client.get(
+                "/api/integrations/glucose/percentiles",
+                params={
+                    "start": "2026-03-07T12:00:00Z",
+                    "end": "2026-03-09T12:00:00Z",
+                    "tz": "America/New_York",
+                },
+                cookies={settings.jwt_cookie_name: cookie},
+            )
+
+        assert response.status_code == 200
+        buckets = response.json()["buckets"]
+        assert buckets[1]["count"] == 1
+        assert buckets[2]["count"] == 0
+        assert buckets[3]["count"] == 1
+
+    @pytest.mark.parametrize("time_zone", ["Not/A/Zone", "../UTC"])
+    async def test_percentiles_invalid_timezone(self, time_zone: str):
         """Verify invalid tz returns 422."""
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
             cookie, _ = await register_and_login(client)
             resp = await client.get(
-                "/api/integrations/glucose/percentiles?days=7&tz=Not/A/Zone",
+                "/api/integrations/glucose/percentiles",
+                params={"days": 7, "tz": time_zone},
                 cookies={settings.jwt_cookie_name: cookie},
             )
         assert resp.status_code == 422
@@ -455,6 +499,237 @@ class TestGlucosePercentiles:
         ) as client:
             resp = await client.get("/api/integrations/glucose/percentiles?days=7")
         assert resp.status_code == 401
+
+
+def test_target_range_snapshot_rejects_inverted_thresholds():
+    with pytest.raises(ValueError, match="urgent_low < low < high < urgent_high"):
+        GlucoseTargetRangeSnapshot(
+            urgent_low=55,
+            low=180,
+            high=70,
+            urgent_high=250,
+        )
+
+
+@pytest.mark.asyncio
+class TestDashboardGlucoseSummary:
+    async def test_matches_complete_standalone_calculations_in_one_scan(self):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            cookie, user_id = await register_and_login(client)
+            async for db in get_db():
+                await seed_5_bucket_glucose(db, user_id, minutes_ago_start=0)
+                await seed_5_bucket_glucose(db, user_id, minutes_ago_start=60)
+                break
+
+            end = datetime.now(UTC) + timedelta(seconds=1)
+            start = end - timedelta(minutes=60)
+            params = {
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "tz": "Europe/Stockholm",
+            }
+            cookies = {settings.jwt_cookie_name: cookie}
+            glucose_statements: list[str] = []
+
+            def count_glucose_statement(
+                _conn, _cursor, statement, _parameters, _context, _executemany
+            ):
+                if "FROM glucose_readings" in statement:
+                    glucose_statements.append(statement)
+
+            sync_engine = get_engine().sync_engine
+            event.listen(sync_engine, "before_cursor_execute", count_glucose_statement)
+            try:
+                summary = await client.get(
+                    "/api/integrations/glucose/dashboard-summary",
+                    params=params,
+                    cookies=cookies,
+                )
+            finally:
+                event.remove(
+                    sync_engine, "before_cursor_execute", count_glucose_statement
+                )
+
+            stats = await client.get(
+                "/api/integrations/glucose/stats",
+                params={"start": params["start"], "end": params["end"]},
+                cookies=cookies,
+            )
+            tir = await client.get(
+                "/api/integrations/glucose/time-in-range",
+                params={
+                    "start": params["start"],
+                    "end": params["end"],
+                    "include_details": "true",
+                },
+                cookies=cookies,
+            )
+
+        assert summary.status_code == 200
+        assert summary.json()["statistics"] == stats.json()
+        assert summary.json()["time_in_range"] == tir.json()
+        assert len(glucose_statements) == 1
+        metadata = summary.json()["metadata"]
+        assert metadata["time_zone"] == "Europe/Stockholm"
+        assert metadata["applied_window"] == {
+            "start": start.isoformat().replace("+00:00", "Z"),
+            "end": end.isoformat().replace("+00:00", "Z"),
+        }
+        assert metadata["comparison_window"] is not None
+        assert metadata["readings_count"] == 10
+        assert metadata["is_truncated"] is False
+        assert len(metadata["glucose_revision"]) == 64
+        assert len(metadata["target_range_revision"]) == 64
+        assert len(metadata["calculation_revision"]) == 64
+
+    async def test_empty_data_returns_valid_zero_snapshot(self):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            cookie, _ = await register_and_login(client)
+            end = datetime.now(UTC)
+            start = end - timedelta(days=2)
+            response = await client.get(
+                "/api/integrations/glucose/dashboard-summary",
+                params={"start": start.isoformat(), "end": end.isoformat()},
+                cookies={settings.jwt_cookie_name: cookie},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["statistics"]["readings_count"] == 0
+        assert data["statistics"]["mean_glucose"] == 0
+        assert data["time_in_range"]["readings_count"] == 0
+        assert all(
+            bucket["readings"] == 0 for bucket in data["time_in_range"]["buckets"]
+        )
+        assert data["time_in_range"]["previous_buckets"] is None
+        assert data["metadata"]["readings_count"] == 0
+
+    async def test_target_change_updates_snapshot_and_revision(self):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            cookie, _ = await register_and_login(client)
+            cookies = {settings.jwt_cookie_name: cookie}
+            params = {
+                "start": "2026-01-01T00:00:00Z",
+                "end": "2026-01-03T00:00:00Z",
+                "tz": "UTC",
+            }
+            before = await client.get(
+                "/api/integrations/glucose/dashboard-summary",
+                params=params,
+                cookies=cookies,
+            )
+            updated = await client.patch(
+                "/api/settings/target-glucose-range",
+                json={"low_target": 75, "high_target": 175},
+                cookies=cookies,
+            )
+            after = await client.get(
+                "/api/integrations/glucose/dashboard-summary",
+                params=params,
+                cookies=cookies,
+            )
+
+        assert updated.status_code == 200
+        assert after.status_code == 200
+        before_metadata = before.json()["metadata"]
+        after_metadata = after.json()["metadata"]
+        assert (
+            before_metadata["target_range_revision"]
+            != after_metadata["target_range_revision"]
+        )
+        assert (
+            before_metadata["calculation_revision"]
+            != after_metadata["calculation_revision"]
+        )
+        assert after_metadata["target_range"] == {
+            "urgent_low": 55,
+            "low": 75,
+            "high": 175,
+            "urgent_high": 250,
+        }
+        assert after.json()["time_in_range"]["thresholds"] == {
+            "urgent_low": 55,
+            "low": 75,
+            "high": 175,
+            "urgent_high": 250,
+        }
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {},
+            {"start": "2026-01-01T00:00:00Z"},
+            {
+                "start": "2026-01-02T00:00:00Z",
+                "end": "2026-01-01T00:00:00Z",
+            },
+            {
+                "start": "2026-01-01T00:00:00Z",
+                "end": "2026-01-02T00:00:00Z",
+                "tz": "Not/A/Zone",
+            },
+            {
+                "start": "2026-01-01T00:00:00Z",
+                "end": "2026-01-02T00:00:00Z",
+                "tz": "../UTC",
+            },
+        ],
+    )
+    async def test_rejects_invalid_ranges_and_timezones(self, params):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            cookie, _ = await register_and_login(client)
+            response = await client.get(
+                "/api/integrations/glucose/dashboard-summary",
+                params=params,
+                cookies={settings.jwt_cookie_name: cookie},
+            )
+        assert response.status_code == 422
+
+    async def test_isolates_users(self):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            cookie_a, user_a = await register_and_login(client)
+            cookie_b, _ = await register_and_login(client)
+            async for db in get_db():
+                await seed_glucose(db, user_a, count=20)
+                break
+            end = datetime.now(UTC) + timedelta(seconds=1)
+            start = end - timedelta(hours=24)
+            params = {"start": start.isoformat(), "end": end.isoformat()}
+            response_a = await client.get(
+                "/api/integrations/glucose/dashboard-summary",
+                params=params,
+                cookies={settings.jwt_cookie_name: cookie_a},
+            )
+            response_b = await client.get(
+                "/api/integrations/glucose/dashboard-summary",
+                params=params,
+                cookies={settings.jwt_cookie_name: cookie_b},
+            )
+
+        assert response_a.json()["metadata"]["readings_count"] == 20
+        assert response_b.json()["metadata"]["readings_count"] == 0
+
+    async def test_requires_authentication(self):
+        end = datetime.now(UTC)
+        start = end - timedelta(days=2)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/integrations/glucose/dashboard-summary",
+                params={"start": start.isoformat(), "end": end.isoformat()},
+            )
+        assert response.status_code == 401
 
 
 @pytest.mark.asyncio

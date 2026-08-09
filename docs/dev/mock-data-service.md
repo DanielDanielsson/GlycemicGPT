@@ -75,7 +75,7 @@ When mock mode is active:
 
 The dashboard does not need special mock specific code. It only sees the same API contract it already uses.
 
-Glucose series, glucose history, glucose stats, and time in range endpoints filter the same generated readings by the requested start and end timestamps. Series responses strictly honor their point budget while retaining each bucket's first, minimum, maximum, and last readings. History responses still honor their pagination limit. Aggregate stats and time in range calculations use every reading in the selected window when no limit is requested, so their counts and percentages match the selected range.
+Glucose series, glucose history, glucose stats, time in range, AGP percentiles, and the V2 dashboard glucose summary filter the same generated readings by the requested start and end timestamps. Series responses strictly honor their point budget while retaining each bucket's first, minimum, maximum, and last readings. History responses still honor their pagination limit. AGP percentiles group complete eligible readings by hour in the requested IANA timezone. The combined V2 summary returns statistics, current and previous time in range, target thresholds, exact windows, source selection, and opaque revision metadata as one coherent response. Aggregate calculations use every eligible reading in the selected window, so their counts and percentages match the selected range.
 
 ## Example Glucose Reading Mock
 

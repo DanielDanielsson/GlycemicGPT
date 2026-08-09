@@ -4,6 +4,7 @@ import { StrictMode } from "react";
 
 import {
   getBolusReviewByDateRange,
+  getDashboardGlucoseSummaryByDateRange,
   getGlucoseHistoryByDateRange,
   getGlucosePercentilesByDateRange,
   getPumpEventHistory,
@@ -16,11 +17,13 @@ import {
   useDashboardBolusReview,
   useDashboardGlucoseHistory,
   useDashboardGlucosePercentiles,
+  useDashboardGlucoseSummary,
   useDashboardPumpEvents,
 } from "./dashboard-query-hooks";
 
 jest.mock("@/lib/api", () => ({
   getBolusReviewByDateRange: jest.fn(),
+  getDashboardGlucoseSummaryByDateRange: jest.fn(),
   getGlucoseHistoryByDateRange: jest.fn(),
   getGlucosePercentilesByDateRange: jest.fn(),
   getPumpEventHistory: jest.fn(),
@@ -35,12 +38,13 @@ jest.mock("@/components/DashboardTimeRangeProvider", () => ({
 const mockGetGlucoseHistoryByDateRange = jest.mocked(
   getGlucoseHistoryByDateRange,
 );
+const mockGetDashboardGlucoseSummaryByDateRange = jest.mocked(
+  getDashboardGlucoseSummaryByDateRange,
+);
 const mockGetGlucosePercentilesByDateRange = jest.mocked(
   getGlucosePercentilesByDateRange,
 );
-const mockGetBolusReviewByDateRange = jest.mocked(
-  getBolusReviewByDateRange,
-);
+const mockGetBolusReviewByDateRange = jest.mocked(getBolusReviewByDateRange);
 const mockGetPumpEventHistory = jest.mocked(getPumpEventHistory);
 const mockUseUserContext = jest.mocked(useUserContext);
 const mockUseOptionalDashboardTimeRange = jest.mocked(
@@ -158,10 +162,9 @@ describe("V2 dashboard query hooks", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    const view = renderHook(
-      () => useDashboardGlucosePercentiles(firstWindow),
-      { wrapper: createWrapper(queryClient) },
-    );
+    const view = renderHook(() => useDashboardGlucosePercentiles(firstWindow), {
+      wrapper: createWrapper(queryClient),
+    });
 
     await waitFor(() => expect(view.result.current.buckets).toHaveLength(1));
     expect(mockGetGlucosePercentilesByDateRange).toHaveBeenCalledWith(
@@ -170,6 +173,70 @@ describe("V2 dashboard query hooks", () => {
       expect.any(String),
     );
     expect(mockGetGlucoseHistoryByDateRange).not.toHaveBeenCalled();
+  });
+
+  it("loads statistics and time in range from one atomic summary request", async () => {
+    mockGetDashboardGlucoseSummaryByDateRange.mockResolvedValue({
+      statistics: {
+        mean_glucose: 110,
+        std_dev: 20,
+        min_glucose: 70,
+        max_glucose: 180,
+        cv_pct: 18.2,
+        gmi: 5.9,
+        cgm_active_pct: 99.3,
+        readings_count: 286,
+        period_minutes: 1440,
+      },
+      time_in_range: {
+        buckets: [],
+        readings_count: 286,
+        previous_buckets: [],
+        previous_readings_count: 288,
+        thresholds: {
+          urgent_low: 55,
+          low: 70,
+          high: 180,
+          urgent_high: 250,
+        },
+      },
+      metadata: {
+        applied_window: { start: firstWindow.from, end: firstWindow.to },
+        comparison_window: {
+          start: "2026-07-31T00:00:00.000Z",
+          end: firstWindow.from,
+        },
+        time_zone: "UTC",
+        readings_count: 286,
+        is_truncated: false,
+        glucose_revision: "a".repeat(64),
+        target_range_revision: "b".repeat(64),
+        calculation_revision: "c".repeat(64),
+        source_selection: { requested: "primary", excluded_sources: [] },
+        target_range: {
+          urgent_low: 55,
+          low: 70,
+          high: 180,
+          urgent_high: 250,
+        },
+      },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const view = renderHook(() => useDashboardGlucoseSummary(firstWindow), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await waitFor(() =>
+      expect(view.result.current.statistics?.readings_count).toBe(286),
+    );
+    expect(view.result.current.timeInRange?.readings_count).toBe(286);
+    expect(mockGetDashboardGlucoseSummaryByDateRange).toHaveBeenCalledWith(
+      firstWindow.from,
+      firstWindow.to,
+      expect.any(String),
+    );
   });
 
   it("issues one initial request for each shared timeline resource", async () => {

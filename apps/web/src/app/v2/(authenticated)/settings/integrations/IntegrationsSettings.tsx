@@ -55,6 +55,8 @@ export default function IntegrationsPage({
       "medtronic-status",
       "glucose-series",
       "glucose-history",
+      "glucose-percentiles",
+      "glucose-summary",
       "glucose-stats",
       "time-in-range",
       "bolus-review",

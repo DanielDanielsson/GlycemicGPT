@@ -114,6 +114,10 @@ from src.schemas.glooko import (
 from src.schemas.glucose import (
     AGPBucket,
     CurrentGlucoseResponse,
+    DashboardGlucoseSummaryResponse,
+    GlucoseAggregationMetadata,
+    GlucoseAggregationSourceSelection,
+    GlucoseAggregationWindow,
     GlucoseHistoryResponse,
     GlucosePercentilesResponse,
     GlucoseReadingResponse,
@@ -124,6 +128,7 @@ from src.schemas.glucose import (
     GlucoseSeriesSourceSelection,
     GlucoseSeriesWindow,
     GlucoseStatsResponse,
+    GlucoseTargetRangeSnapshot,
     SyncResponse,
     SyncStatusResponse,
     TimeInRangeDetailResponse,
@@ -200,6 +205,12 @@ from src.services.forecast_reader import (
     resolve_effective_source,
     set_forecast_source,
 )
+from src.services.glucose_aggregation import (
+    get_complete_agp_aggregation,
+    get_dashboard_glucose_aggregation,
+    glucose_revision,
+    opaque_revision,
+)
 from src.services.glucose_series import (
     GLUCOSE_SERIES_CONTINUITY_GAP_MS,
     MAX_GLUCOSE_SERIES_DATA_POINTS,
@@ -269,6 +280,17 @@ _MIN_PREV_PERIOD_READINGS = 10
 
 # Maximum window supported by V2 dashboard date-range queries.
 _MAX_DATE_RANGE_DAYS = 90
+
+
+def _validate_time_zone(time_zone: str) -> None:
+    """Reject invalid IANA timezone names with the public query error shape."""
+    try:
+        zoneinfo.ZoneInfo(time_zone)
+    except (KeyError, ValueError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid timezone: {time_zone}",
+        ) from e
 
 
 def _validate_date_range(
@@ -4016,8 +4038,6 @@ async def push_pump_events(
 
 # --- Story 30.1: Aggregate statistics endpoints ---
 
-# Maximum rows to load into memory for percentile calculation
-_AGP_MAX_ROWS = 50_000
 # Hard safety cap for displayed/aggregated insulin units. Shares the platform
 # `MAX_INSULIN_DOSE_UNITS` bound (NovoPen 6 max actuation = 60U) with the
 # ingestion mappers so a legitimate large single dose -- e.g. a >25U pen dose,
@@ -4082,17 +4102,67 @@ def _boundary_aligned_cutoff(
     return (effective_boundary - timedelta(days=max(days - 1, 0))).astimezone(UTC)
 
 
-def _compute_percentile(data: list[float], pct: float) -> float:
-    """Compute percentile using linear interpolation (matching numpy default)."""
-    if not data:
-        return 0.0
-    sorted_data = sorted(data)
-    k = (len(sorted_data) - 1) * (pct / 100)
-    f = math.floor(k)
-    c = math.ceil(k)
-    if f == c:
-        return round(sorted_data[int(k)], 1)
-    return round(sorted_data[f] * (c - k) + sorted_data[c] * (k - f), 1)
+def _target_range_snapshot(target_range) -> GlucoseTargetRangeSnapshot:
+    return GlucoseTargetRangeSnapshot(
+        urgent_low=target_range.urgent_low,
+        low=target_range.low_target,
+        high=target_range.high_target,
+        urgent_high=target_range.urgent_high,
+    )
+
+
+def _target_range_revision(target_range) -> str:
+    return opaque_revision(
+        {
+            "updated_at": target_range.updated_at.isoformat(),
+            "urgent_low": target_range.urgent_low,
+            "low": target_range.low_target,
+            "high": target_range.high_target,
+            "urgent_high": target_range.urgent_high,
+        }
+    )
+
+
+def _derived_glucose_metadata(
+    *,
+    start: datetime,
+    end: datetime,
+    comparison_start: datetime | None,
+    time_zone: str,
+    readings_count: int,
+    excluded_sources: list[str],
+    include_secondary: bool,
+    glucose_revision_value: str,
+    target_range,
+    calculation_inputs: dict[str, object],
+) -> GlucoseAggregationMetadata:
+    target_revision = _target_range_revision(target_range)
+    return GlucoseAggregationMetadata(
+        applied_window=GlucoseAggregationWindow(start=start, end=end),
+        comparison_window=(
+            GlucoseAggregationWindow(start=comparison_start, end=start)
+            if comparison_start is not None
+            else None
+        ),
+        time_zone=time_zone,
+        readings_count=readings_count,
+        is_truncated=False,
+        glucose_revision=glucose_revision_value,
+        target_range_revision=target_revision,
+        calculation_revision=opaque_revision(
+            {
+                "glucose_revision": glucose_revision_value,
+                "target_range_revision": target_revision,
+                "time_zone": time_zone,
+                **calculation_inputs,
+            }
+        ),
+        source_selection=GlucoseAggregationSourceSelection(
+            requested=("primary_and_secondary" if include_secondary else "primary"),
+            excluded_sources=excluded_sources,
+        ),
+        target_range=_target_range_snapshot(target_range),
+    )
 
 
 @router.get(
@@ -4252,77 +4322,239 @@ async def get_glucose_percentiles(
     the V2 dashboard's selected range, including its 2 day minimum.
     By default profiles the primary CGM source only (Story 43.10).
     """
-    # Validate timezone
-    try:
-        user_tz = zoneinfo.ZoneInfo(tz)
-    except (KeyError, zoneinfo.ZoneInfoNotFoundError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid timezone: {tz}",
-        ) from e
+    _validate_time_zone(tz)
 
     date_range = _validate_date_range(start, end)
     if date_range is not None:
         cutoff, upper = date_range
         period_days = max(1, math.ceil((upper - cutoff).total_seconds() / 86400))
     else:
-        cutoff = datetime.now(UTC) - timedelta(days=days)
-        upper = None
+        upper = datetime.now(UTC)
+        cutoff = upper - timedelta(days=days)
         period_days = days
     excluded = await get_excluded_cgm_sources(
         db, current_user.id, include_secondary=include_secondary
     )
-
-    # Fetch readings with a hard row cap to prevent memory issues
-    conditions = [
-        GlucoseReading.user_id == current_user.id,
-        GlucoseReading.reading_timestamp >= cutoff,
-        GlucoseReading.value >= 20,
-        GlucoseReading.value <= 500,
-        *glucose_source_exclusion_clause(excluded),
-    ]
-    if upper is not None:
-        conditions.append(GlucoseReading.reading_timestamp < upper)
-    result = await db.execute(
-        select(
-            GlucoseReading.reading_timestamp,
-            GlucoseReading.value,
-        )
-        .where(*conditions)
-        .order_by(GlucoseReading.reading_timestamp)
-        .limit(_AGP_MAX_ROWS)
+    target_range = await get_or_create_range(current_user.id, db)
+    aggregated_hours = await get_complete_agp_aggregation(
+        db,
+        current_user.id,
+        start=cutoff,
+        end=upper,
+        time_zone=tz,
+        excluded_sources=excluded,
     )
-    rows = result.all()
-
-    # Group values by hour in the user's timezone
-    hourly: dict[int, list[float]] = {h: [] for h in range(24)}
-    for row in rows:
-        ts = row.reading_timestamp
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=UTC)
-        local_ts = ts.astimezone(user_tz)
-        hourly[local_ts.hour].append(float(row.value))
-
-    buckets = []
-    for h in range(24):
-        vals = hourly[h]
-        buckets.append(
-            AGPBucket(
-                hour=h,
-                p10=_compute_percentile(vals, 10),
-                p25=_compute_percentile(vals, 25),
-                p50=_compute_percentile(vals, 50),
-                p75=_compute_percentile(vals, 75),
-                p90=_compute_percentile(vals, 90),
-                count=len(vals),
-            )
+    aggregated_by_hour = {row.hour: row for row in aggregated_hours}
+    buckets = [
+        AGPBucket(
+            hour=hour,
+            p10=aggregated_by_hour[hour].p10 if hour in aggregated_by_hour else 0,
+            p25=aggregated_by_hour[hour].p25 if hour in aggregated_by_hour else 0,
+            p50=aggregated_by_hour[hour].p50 if hour in aggregated_by_hour else 0,
+            p75=aggregated_by_hour[hour].p75 if hour in aggregated_by_hour else 0,
+            p90=aggregated_by_hour[hour].p90 if hour in aggregated_by_hour else 0,
+            count=aggregated_by_hour[hour].count if hour in aggregated_by_hour else 0,
         )
+        for hour in range(24)
+    ]
+    readings_count = sum(row.count for row in aggregated_hours)
+    newest_reading_timestamp = max(
+        (
+            row.newest_reading_timestamp
+            for row in aggregated_hours
+            if row.newest_reading_timestamp is not None
+        ),
+        default=None,
+    )
+    newest_received_at = max(
+        (
+            row.newest_received_at
+            for row in aggregated_hours
+            if row.newest_received_at is not None
+        ),
+        default=None,
+    )
+    revision = glucose_revision(
+        start=cutoff,
+        end=upper,
+        excluded_sources=excluded,
+        readings_count=readings_count,
+        newest_reading_timestamp=newest_reading_timestamp,
+        newest_received_at=newest_received_at,
+    )
 
     return GlucosePercentilesResponse(
         buckets=buckets,
         period_days=period_days,
-        readings_count=len(rows),
-        is_truncated=len(rows) >= _AGP_MAX_ROWS,
+        readings_count=readings_count,
+        is_truncated=False,
+        metadata=_derived_glucose_metadata(
+            start=cutoff,
+            end=upper,
+            comparison_start=None,
+            time_zone=tz,
+            readings_count=readings_count,
+            excluded_sources=excluded,
+            include_secondary=include_secondary,
+            glucose_revision_value=revision,
+            target_range=target_range,
+            calculation_inputs={"kind": "agp-percentiles"},
+        ),
+    )
+
+
+@router.get(
+    "/glucose/dashboard-summary",
+    response_model=DashboardGlucoseSummaryResponse,
+    responses={
+        200: {"description": "Atomic V2 glucose statistics and time in range"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Permission denied"},
+    },
+)
+@limiter.limit("30/minute")
+async def get_dashboard_glucose_summary(
+    request: Request,
+    current_user: DiabeticOrAdminUser,
+    db: AsyncSession = Depends(get_db),
+    start: datetime = Query(
+        ..., description="Start of exact date range (ISO 8601, UTC)"
+    ),
+    end: datetime = Query(
+        ..., description="End of exact date range (ISO 8601, UTC)"
+    ),
+    tz: str = Query(
+        default="UTC",
+        max_length=50,
+        description="IANA timezone associated with the selected dashboard range",
+    ),
+    include_secondary: bool = Query(
+        default=False,
+        description="Include secondary CGM sources. Off by default.",
+    ),
+) -> DashboardGlucoseSummaryResponse:
+    """Return one coherent V2 summary snapshot for an exact window."""
+    _validate_time_zone(tz)
+
+    date_range = _validate_date_range(start, end)
+    assert date_range is not None
+    cutoff, upper = date_range
+    comparison_start = cutoff - (upper - cutoff)
+    excluded = await get_excluded_cgm_sources(
+        db, current_user.id, include_secondary=include_secondary
+    )
+    target_range = await get_or_create_range(current_user.id, db)
+    aggregate = await get_dashboard_glucose_aggregation(
+        db,
+        current_user.id,
+        start=cutoff,
+        end=upper,
+        urgent_low=target_range.urgent_low,
+        low=target_range.low_target,
+        high=target_range.high_target,
+        urgent_high=target_range.urgent_high,
+        excluded_sources=excluded,
+    )
+
+    period_minutes = max(1, int((upper - cutoff).total_seconds() / 60))
+    mean = aggregate.mean
+    stddev = aggregate.stddev
+    count = aggregate.current_count
+    statistics = GlucoseStatsResponse(
+        mean_glucose=round(mean, 1),
+        std_dev=round(stddev, 1),
+        min_glucose=round(aggregate.minimum, 1),
+        max_glucose=round(aggregate.maximum, 1),
+        cv_pct=round((stddev / mean) * 100, 1) if mean > 0 else 0,
+        gmi=round(3.31 + (0.02392 * mean), 1) if count > 0 else 0,
+        cgm_active_pct=(
+            round(min((count / (period_minutes / 5)) * 100, 100.0), 1)
+            if count > 0
+            else 0
+        ),
+        readings_count=count,
+        period_minutes=period_minutes,
+    )
+
+    def bucket_result(counts: dict[str, int], total: int) -> dict[str, int]:
+        return {
+            "total": total,
+            **{f"{label}_count": value for label, value in counts.items()},
+        }
+
+    current_tir_counts = bucket_result(aggregate.current_bucket_counts, count)
+    previous_tir_counts = bucket_result(
+        aggregate.previous_bucket_counts,
+        aggregate.previous_count,
+    )
+    previous_buckets = None
+    previous_count = None
+    if aggregate.previous_count >= _MIN_PREV_PERIOD_READINGS:
+        previous_buckets = _build_tir_buckets(
+            previous_tir_counts,
+            target_range.urgent_low,
+            target_range.low_target,
+            target_range.high_target,
+            target_range.urgent_high,
+        )
+        previous_count = aggregate.previous_count
+
+    time_in_range = TimeInRangeDetailResponse(
+        buckets=_build_tir_buckets(
+            current_tir_counts,
+            target_range.urgent_low,
+            target_range.low_target,
+            target_range.high_target,
+            target_range.urgent_high,
+        ),
+        readings_count=count,
+        previous_buckets=previous_buckets,
+        previous_readings_count=previous_count,
+        thresholds=TirThresholds(
+            urgent_low=target_range.urgent_low,
+            low=target_range.low_target,
+            high=target_range.high_target,
+            urgent_high=target_range.urgent_high,
+        ),
+    )
+    current_revision = glucose_revision(
+        start=cutoff,
+        end=upper,
+        excluded_sources=excluded,
+        readings_count=count,
+        newest_reading_timestamp=aggregate.newest_reading_timestamp,
+        newest_received_at=aggregate.newest_received_at,
+    )
+    previous_revision = glucose_revision(
+        start=comparison_start,
+        end=cutoff,
+        excluded_sources=excluded,
+        readings_count=aggregate.previous_count,
+        newest_reading_timestamp=aggregate.previous_newest_reading_timestamp,
+        newest_received_at=aggregate.previous_newest_received_at,
+    )
+    summary_revision = opaque_revision(
+        {
+            "current": current_revision,
+            "previous": previous_revision,
+        }
+    )
+
+    return DashboardGlucoseSummaryResponse(
+        statistics=statistics,
+        time_in_range=time_in_range,
+        metadata=_derived_glucose_metadata(
+            start=cutoff,
+            end=upper,
+            comparison_start=comparison_start,
+            time_zone=tz,
+            readings_count=count,
+            excluded_sources=excluded,
+            include_secondary=include_secondary,
+            glucose_revision_value=summary_revision,
+            target_range=target_range,
+            calculation_inputs={"kind": "dashboard-glucose-summary"},
+        ),
     )
 
 

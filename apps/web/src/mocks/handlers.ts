@@ -6,6 +6,7 @@ import {
   buildAlertThresholds,
   buildBolusReview,
   buildCgmSources,
+  buildDashboardGlucoseSummary,
   buildForecast,
   buildGlookoAvailability,
   buildGlookoStatus,
@@ -830,6 +831,37 @@ export const handlers = [
   http.get(`${API}/integrations/glucose/time-in-range`, ({ request }) => {
     const { data } = snapshot();
     return ok(buildTimeInRangeDetail(data, requestParams(request)));
+  }),
+
+  http.get(`${API}/integrations/glucose/dashboard-summary`, ({ request }) => {
+    const params = requestParams(request);
+    const start = params.get("start");
+    const end = params.get("end");
+    const timeZone = params.get("tz") ?? "UTC";
+    const startMs = start ? new Date(start).getTime() : Number.NaN;
+    const endMs = end ? new Date(end).getTime() : Number.NaN;
+    let validTimeZone = true;
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone });
+    } catch {
+      validTimeZone = false;
+    }
+    if (
+      !start ||
+      !end ||
+      !Number.isFinite(startMs) ||
+      !Number.isFinite(endMs) ||
+      endMs <= startMs ||
+      endMs - startMs > 90 * 24 * 60 * 60 * 1000 ||
+      !validTimeZone
+    ) {
+      return HttpResponse.json(
+        { detail: "Invalid dashboard glucose summary query" },
+        { status: 422 },
+      );
+    }
+    const { data } = snapshot();
+    return ok(buildDashboardGlucoseSummary(data, params));
   }),
 
   http.get(`${API}/integrations/glucose/percentiles`, ({ request }) => {

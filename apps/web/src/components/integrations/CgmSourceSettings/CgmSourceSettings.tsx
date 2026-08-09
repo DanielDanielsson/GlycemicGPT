@@ -49,6 +49,8 @@ export function CgmSourceSettings(_props: CgmSourceSettingsProps = {}) {
           "cgm-sources",
           "glucose-series",
           "glucose-history",
+          "glucose-percentiles",
+          "glucose-summary",
           "glucose-stats",
           "time-in-range",
           "bolus-review",

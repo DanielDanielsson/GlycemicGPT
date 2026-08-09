@@ -9,6 +9,8 @@ import {
   type MedtronicImportResponse,
 } from "@/lib/api";
 import { twMerge } from "@/lib/ui/twMerge";
+import { useDashboardInvalidation } from "@/hooks/dashboard-query";
+import { GLUCOSE_DATA_RESOURCES } from "@/lib/query/dashboard";
 import { SelectField } from "@/components/SelectField";
 import { TextInput } from "@/components/TextInput";
 import { FeedbackMessage } from "@/components/FeedbackMessage";
@@ -61,6 +63,7 @@ function isoDate(d: Date): string {
 export function MedtronicImportSettings({
   isOffline,
 }: MedtronicImportSettingsProps) {
+  const { invalidateResources } = useDashboardInvalidation();
   const [regionCode, setRegionCode] = useState<"US" | "EU">("US");
   const [token, setToken] = useState<string>("");
   const [pasteValue, setPasteValue] = useState<string>("");
@@ -235,12 +238,21 @@ export function MedtronicImportSettings({
         browserTz,
       );
       setResult(res);
+      await invalidateResources(GLUCOSE_DATA_RESOURCES).catch(() => undefined);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Import failed");
     } finally {
       setIsImporting(false);
     }
-  }, [token, rangeOptions, region.code, importStart, importEnd, browserTz]);
+  }, [
+    token,
+    rangeOptions,
+    region.code,
+    importStart,
+    importEnd,
+    browserTz,
+    invalidateResources,
+  ]);
 
   const btnClass = twMerge(
     "rounded-panel px-4 py-2 font_ui_label transition-colors",

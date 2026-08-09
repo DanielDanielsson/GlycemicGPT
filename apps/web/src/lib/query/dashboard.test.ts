@@ -2,12 +2,17 @@ import { QueryClient } from "@tanstack/react-query";
 
 import {
   dashboardQueryKeys,
+  GLUCOSE_DATA_RESOURCES,
   invalidateDashboardResources,
   normalizeHistoryWindow,
   shouldRetryDashboardQuery,
 } from "./dashboard";
 
 describe("dashboard query foundation", () => {
+  it("invalidates pump events with imported glucose data", () => {
+    expect(GLUCOSE_DATA_RESOURCES).toContain("pump-events");
+  });
+
   it("normalizes equivalent windows into stable keys", () => {
     const first = normalizeHistoryWindow({
       from: "2026-08-01T00:00:00Z",

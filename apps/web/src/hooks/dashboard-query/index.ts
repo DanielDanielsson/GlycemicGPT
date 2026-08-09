@@ -5,6 +5,7 @@ export {
   useDashboardGlucoseHistory,
   useDashboardGlucosePercentiles,
   useDashboardGlucoseRange,
+  useDashboardGlucoseSummary,
   useDashboardGlucoseStats,
   useDashboardInsulinSummary,
   useDashboardPumpEvents,

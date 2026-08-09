@@ -3561,6 +3561,40 @@ export interface GlucosePercentilesResponse {
   period_days: number;
   readings_count: number;
   is_truncated: boolean;
+  metadata?: GlucoseAggregationMetadata;
+}
+
+export interface GlucoseAggregationMetadata {
+  applied_window: {
+    start: string;
+    end: string;
+  };
+  comparison_window: {
+    start: string;
+    end: string;
+  } | null;
+  time_zone: string;
+  readings_count: number;
+  is_truncated: boolean;
+  glucose_revision: string;
+  target_range_revision: string;
+  calculation_revision: string;
+  source_selection: {
+    requested: "primary" | "primary_and_secondary";
+    excluded_sources: string[];
+  };
+  target_range: {
+    urgent_low: number;
+    low: number;
+    high: number;
+    urgent_high: number;
+  };
+}
+
+export interface DashboardGlucoseSummaryResponse {
+  statistics: GlucoseStats;
+  time_in_range: TimeInRangeDetailStats;
+  metadata: GlucoseAggregationMetadata;
 }
 
 export async function getGlucosePercentiles(
@@ -3594,7 +3628,30 @@ export async function getGlucosePercentilesByDateRange(
     { signal },
   );
   if (!response.ok) {
-    throw await apiRequestError(response, "Failed to fetch glucose percentiles");
+    throw await apiRequestError(
+      response,
+      "Failed to fetch glucose percentiles",
+    );
+  }
+  return response.json();
+}
+
+export async function getDashboardGlucoseSummaryByDateRange(
+  start: string,
+  end: string,
+  tz?: string,
+  signal?: AbortSignal,
+): Promise<DashboardGlucoseSummaryResponse> {
+  const timezone = tz ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/integrations/glucose/dashboard-summary?${buildDateRangeParams(start, end)}&tz=${encodeURIComponent(timezone)}`,
+    { signal },
+  );
+  if (!response.ok) {
+    throw await apiRequestError(
+      response,
+      "Failed to fetch dashboard glucose summary",
+    );
   }
   return response.json();
 }

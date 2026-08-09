@@ -15,6 +15,7 @@ export type DashboardResource =
   | "glooko-status"
   | "glucose-history"
   | "glucose-percentiles"
+  | "glucose-summary"
   | "glucose-series"
   | "glucose-range"
   | "glucose-stats"
@@ -25,6 +26,16 @@ export type DashboardResource =
   | "pump-events"
   | "pump-status"
   | "time-in-range";
+
+export const GLUCOSE_DATA_RESOURCES = [
+  "glucose-history",
+  "glucose-series",
+  "glucose-percentiles",
+  "glucose-summary",
+  "glucose-stats",
+  "pump-events",
+  "time-in-range",
+] as const satisfies readonly DashboardResource[];
 
 export interface NormalizedHistoryWindow {
   from: string;
