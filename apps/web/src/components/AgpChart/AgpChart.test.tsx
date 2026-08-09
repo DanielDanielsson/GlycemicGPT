@@ -14,6 +14,7 @@ import {
   formatHour,
   transformBuckets,
 } from "./AgpChart";
+import { buildSmoothedAgpPlotPoints } from "./agp-smoothing";
 
 const mockRefetch = jest.fn();
 const mockDestroy = jest.fn();
@@ -401,5 +402,68 @@ describe("AGP data helpers", () => {
       p90: 159,
     });
     expect(buckets[0].count).toBe(0);
+  });
+});
+
+describe("V2 AGP curve smoothing", () => {
+  const points = Array.from({ length: 24 }, (_, hour) => ({
+    hour,
+    label: formatHour(hour),
+    p10: 70 + hour,
+    p25: 80 + hour,
+    p50: 100 + hour,
+    p75: 130 + hour,
+    p90: 160 + hour,
+    count: 12,
+  }));
+
+  it("keeps exact hourly values and closes the modal day at midnight", () => {
+    const smoothed = buildSmoothedAgpPlotPoints(points);
+
+    for (const point of points) {
+      expect(smoothed.find((sample) => sample.hour === point.hour)).toMatchObject({
+        p10: point.p10,
+        p25: point.p25,
+        p50: point.p50,
+        p75: point.p75,
+        p90: point.p90,
+      });
+    }
+    expect(smoothed.at(-1)).toMatchObject({
+      hour: 24,
+      p10: points[0].p10,
+      p50: points[0].p50,
+      p90: points[0].p90,
+    });
+  });
+
+  it("preserves percentile ordering at every interpolated sample", () => {
+    const smoothed = buildSmoothedAgpPlotPoints(points);
+
+    for (const sample of smoothed) {
+      if (sample.p10 === null) continue;
+      expect(sample.p10).toBeLessThanOrEqual(sample.p25 as number);
+      expect(sample.p25).toBeLessThanOrEqual(sample.p50 as number);
+      expect(sample.p50).toBeLessThanOrEqual(sample.p75 as number);
+      expect(sample.p75).toBeLessThanOrEqual(sample.p90 as number);
+    }
+  });
+
+  it("leaves a real gap around an empty hourly bucket", () => {
+    const withGap = points.map((point) =>
+      point.hour === 6 ? { ...point, count: 0 } : point,
+    );
+    const smoothed = buildSmoothedAgpPlotPoints(withGap);
+
+    expect(smoothed.find((sample) => sample.hour === 6)).toMatchObject({
+      p10: null,
+      p50: null,
+      p90: null,
+    });
+    expect(
+      smoothed
+        .filter((sample) => sample.hour > 5 && sample.hour < 7)
+        .every((sample) => sample.p50 === null),
+    ).toBe(true);
   });
 });

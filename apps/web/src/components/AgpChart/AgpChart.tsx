@@ -23,6 +23,7 @@ import { twMerge } from "@/lib/ui/twMerge";
 import { resolveChartPalette } from "@/lib/charts/chart-theme";
 import styles from "@/components/GlucoseTrendChart/GlucoseTrendChart.module.css";
 import type { AgpChartPoint, AgpChartProps } from "./AgpChart.types";
+import { buildSmoothedAgpPlotPoints } from "./agp-smoothing";
 
 const DEFAULT_Y_DOMAIN: [number, number] = [40, 300];
 const HOUR_SPLITS = [0, 3, 6, 9, 12, 15, 18, 21];
@@ -204,6 +205,7 @@ function UplotAgpChart({
   rangeLabel,
   unit,
   yDomain,
+  smoothCurves = false,
 }: {
   data: AgpChartPoint[];
   high: number;
@@ -211,6 +213,7 @@ function UplotAgpChart({
   rangeLabel: string;
   unit: GlucoseUnit;
   yDomain: [number, number];
+  smoothCurves?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const detailsId = useId();
@@ -286,16 +289,26 @@ function UplotAgpChart({
     const medianStroke = palette.signalInfoText;
     const outerFill = withAlpha(palette.signalInfoFill, 0.15);
     const innerFill = withAlpha(palette.signalInfoFill, 0.3);
-    const hours = data.map((point) => point.hour);
+    const plotData = smoothCurves
+      ? buildSmoothedAgpPlotPoints(data)
+      : data.map((point) => ({
+          hour: point.hour,
+          p10: point.p10,
+          p25: point.p25,
+          p50: point.p50,
+          p75: point.p75,
+          p90: point.p90,
+        }));
+    const hours = plotData.map((point) => point.hour);
     const values: uPlot.AlignedData = [
       hours,
-      data.map((point) => point.p10),
-      data.map((point) => point.p25),
-      data.map((point) => point.p50),
-      data.map((point) => point.p75),
-      data.map((point) => point.p90),
-      data.map(() => low),
-      data.map(() => high),
+      plotData.map((point) => point.p10),
+      plotData.map((point) => point.p25),
+      plotData.map((point) => point.p50),
+      plotData.map((point) => point.p75),
+      plotData.map((point) => point.p90),
+      plotData.map(() => low),
+      plotData.map(() => high),
     ];
     const hiddenSeries: uPlot.Series = {
       stroke: palette.transparent,
@@ -320,7 +333,7 @@ function UplotAgpChart({
         points: { show: false },
       },
       scales: {
-        x: { time: false, range: [0, 23] },
+        x: { time: false, range: [0, smoothCurves ? 24 : 23] },
         y: { range: yDomain },
       },
       axes: [
@@ -364,10 +377,16 @@ function UplotAgpChart({
         setCursor: [
           (chart) => {
             const index = chart.cursor.idx;
+            const cursorHour =
+              smoothCurves && typeof chart.cursor.left === "number"
+                ? Math.round(chart.posToVal(chart.cursor.left, "x")) % 24
+                : null;
             setHoveredPoint(
-              typeof index === "number" && chart.cursor.left !== null
-                ? (data[index] ?? null)
-                : null,
+              cursorHour !== null
+                ? (data.find((point) => point.hour === cursorHour) ?? null)
+                : typeof index === "number" && chart.cursor.left !== null
+                  ? (data[index] ?? null)
+                  : null,
             );
           },
         ],
@@ -382,6 +401,7 @@ function UplotAgpChart({
     dimensions.width,
     high,
     low,
+    smoothCurves,
     themeRevision,
     unit,
     yDomain,
@@ -469,9 +489,9 @@ function AgpLegend() {
 
 interface AgpChartForWindowProps extends AgpChartProps {
   queryData:
-    | GlucoseHistoryResult
-    | ReturnType<typeof useDashboardGlucosePercentiles>;
+    GlucoseHistoryResult | ReturnType<typeof useDashboardGlucosePercentiles>;
   rangeLabel: string;
+  smoothCurves?: boolean;
   timeZone: string;
 }
 
@@ -479,6 +499,7 @@ function AgpChartForWindow({
   className,
   queryData,
   rangeLabel,
+  smoothCurves = false,
   thresholds,
   timeZone,
   unit = "mgdl",
@@ -486,8 +507,9 @@ function AgpChartForWindow({
   const { isLoading, isUpdating, hasBackgroundError, error, refetch } =
     queryData;
   const readings = "readings" in queryData ? queryData.readings : null;
-  const percentileBuckets =
-    "buckets" in queryData ? queryData.buckets : null;
+  const percentileBuckets = "buckets" in queryData ? queryData.buckets : null;
+  const responseTargetRange =
+    "metadata" in queryData ? queryData.metadata?.target_range : null;
 
   const chartData = useMemo(
     () =>
@@ -497,10 +519,14 @@ function AgpChartForWindow({
     [percentileBuckets, readings, timeZone],
   );
   const hasData = chartData.some((point) => point.count > 0);
-  const low = clampMgdl(thresholds?.low ?? 70);
-  const high = clampMgdl(thresholds?.high ?? 180);
+  const low = clampMgdl(responseTargetRange?.low ?? thresholds?.low ?? 70);
+  const high = clampMgdl(responseTargetRange?.high ?? thresholds?.high ?? 180);
   const yDomain = useMemo(
-    () => resolveYDomain(chartData, [low, high]),
+    () =>
+      resolveYDomain(
+        chartData.filter((point) => point.count > 0),
+        [low, high],
+      ),
     [chartData, high, low],
   );
 
@@ -553,6 +579,7 @@ function AgpChartForWindow({
               high={high}
               low={low}
               rangeLabel={rangeLabel}
+              smoothCurves={smoothCurves}
               unit={unit}
               yDomain={yDomain}
             />
@@ -626,6 +653,7 @@ function AgpChartContent({
   const chartProps = {
     className,
     rangeLabel: label,
+    smoothCurves: useCompactPercentiles,
     thresholds,
     timeZone,
     unit,
@@ -636,9 +664,7 @@ function AgpChartContent({
   }
 
   if (useCompactPercentiles) {
-    return (
-      <V2AgpChartForWindowQuery {...chartProps} window={currentWindow} />
-    );
+    return <V2AgpChartForWindowQuery {...chartProps} window={currentWindow} />;
   }
 
   if (!queryAdapter) {
@@ -671,7 +697,9 @@ export function V2AgpChartView({
   queryData,
   ...props
 }: AgpChartProps & { queryData: GlucoseHistoryResult }) {
-  return <AgpChartContent {...props} queryData={queryData} />;
+  return (
+    <AgpChartContent {...props} queryData={queryData} useCompactPercentiles />
+  );
 }
 
 export default AgpChart;
