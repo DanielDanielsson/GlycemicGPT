@@ -67,11 +67,12 @@ describe("TimeInRangePanel", () => {
       }),
     ).toBeInTheDocument();
     expect(within(panel).queryByText("Last 24 hours")).not.toBeInTheDocument();
-    expect(within(panel).getByText("Excellent")).toHaveClass(
-      "text-signal-check-text",
-    );
+    expect(within(panel).queryByText("Excellent")).not.toBeInTheDocument();
     expect(within(panel).getByTestId("time-in-range-delta")).toHaveTextContent(
-      "+8%",
+      "Previous period: +8.0%",
+    );
+    expect(within(panel).getByTestId("time-in-range-delta")).toHaveClass(
+      "text-foreground-secondary",
     );
     expect(
       within(panel).getByRole("img", {
@@ -88,7 +89,9 @@ describe("TimeInRangePanel", () => {
         name: "Urgent high: 5%",
       }),
     ).toHaveClass("text-signal-error-fill", "max-w-[4.5rem]");
-    expect(within(panel).queryByText("Target: 70-180 mg/dL")).not.toBeInTheDocument();
+    expect(
+      within(panel).queryByText("Target: 70-180 mg/dL"),
+    ).not.toBeInTheDocument();
     expect(
       within(panel).getByText("200 readings compared with 180 previous"),
     ).toBeInTheDocument();
@@ -121,15 +124,13 @@ describe("TimeInRangePanel", () => {
 
   it("treats an empty current bucket array as unavailable", () => {
     render(
-      <TimeInRangePanel
-        {...baseProps}
-        buckets={[]}
-        readingsCount={200}
-      />,
+      <TimeInRangePanel {...baseProps} buckets={[]} readingsCount={200} />,
     );
 
     expect(screen.getByTestId("time-in-range-panel-empty")).toBeInTheDocument();
-    expect(screen.queryByRole("img", { name: /In range/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("img", { name: /In range/ }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByTestId("time-in-range-delta")).not.toBeInTheDocument();
   });
 
@@ -138,6 +139,18 @@ describe("TimeInRangePanel", () => {
       <TimeInRangePanel
         {...baseProps}
         previousBuckets={[]}
+        previousReadingsCount={0}
+      />,
+    );
+
+    expect(screen.getByTestId("time-in-range-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("time-in-range-delta")).not.toBeInTheDocument();
+  });
+
+  it("does not calculate a comparison when the previous reading count is zero", () => {
+    render(
+      <TimeInRangePanel
+        {...baseProps}
         previousReadingsCount={0}
       />,
     );

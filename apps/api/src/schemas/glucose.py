@@ -6,7 +6,7 @@ Pydantic schemas for glucose reading API responses.
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from src.models.glucose import TrendDirection
 
@@ -54,6 +54,55 @@ class GlucoseHistoryResponse(BaseModel):
 
     readings: list[GlucoseReadingResponse]
     count: int = Field(..., description="Number of readings returned")
+
+
+class GlucoseSeriesWindow(BaseModel):
+    """Exact UTC window applied to a glucose series request."""
+
+    start: datetime
+    end: datetime
+
+
+class GlucoseSeriesSourceSelection(BaseModel):
+    """Requested and resolved CGM source filtering for a glucose series."""
+
+    requested: Literal["primary", "primary_and_secondary"]
+    excluded_sources: list[str]
+
+
+class GlucoseSeriesContinuityGap(BaseModel):
+    """A real gap between consecutive raw sensor readings."""
+
+    start: datetime
+    end: datetime
+
+
+class GlucoseSeriesContinuity(BaseModel):
+    """Continuity information retained independently from point reduction."""
+
+    max_gap_ms: int = Field(..., ge=1)
+    gaps: list[GlucoseSeriesContinuityGap]
+
+
+class GlucoseSeriesMetadata(BaseModel):
+    """Resolution and source metadata for a glucose series response."""
+
+    requested_max_data_points: int = Field(..., ge=4, le=2_000)
+    raw_reading_count: int = Field(..., ge=0)
+    returned_point_count: int = Field(..., ge=0, le=2_000)
+    reduction_mode: Literal["raw", "reduced"]
+    bucket_interval_ms: int | None = Field(default=None, ge=1)
+    timeline_revision: str = Field(..., min_length=64, max_length=64)
+    applied_window: GlucoseSeriesWindow
+    source_selection: GlucoseSeriesSourceSelection
+    continuity: GlucoseSeriesContinuity
+
+
+class GlucoseSeriesResponse(BaseModel):
+    """Resolution aware glucose readings for timeline rendering."""
+
+    readings: list[GlucoseReadingResponse]
+    metadata: GlucoseSeriesMetadata
 
 
 class TimeInRangeResponse(BaseModel):
@@ -187,6 +236,53 @@ class GlucoseStatsResponse(BaseModel):
     period_minutes: int = Field(..., ge=1, description="Analysis window in minutes")
 
 
+class GlucoseAggregationWindow(BaseModel):
+    """Exact UTC window applied to a derived glucose calculation."""
+
+    start: datetime
+    end: datetime
+
+
+class GlucoseAggregationSourceSelection(BaseModel):
+    """Requested and resolved source filtering for a derived calculation."""
+
+    requested: Literal["primary", "primary_and_secondary"]
+    excluded_sources: list[str]
+
+
+class GlucoseTargetRangeSnapshot(BaseModel):
+    """Configured thresholds used by the response snapshot."""
+
+    urgent_low: float = Field(..., ge=20, le=500)
+    low: float = Field(..., ge=20, le=500)
+    high: float = Field(..., ge=20, le=500)
+    urgent_high: float = Field(..., ge=20, le=500)
+
+    @model_validator(mode="after")
+    def validate_threshold_ordering(self) -> "GlucoseTargetRangeSnapshot":
+        """Keep response metadata consistent with stored range invariants."""
+        if not self.urgent_low < self.low < self.high < self.urgent_high:
+            raise ValueError(
+                "Thresholds must satisfy urgent_low < low < high < urgent_high"
+            )
+        return self
+
+
+class GlucoseAggregationMetadata(BaseModel):
+    """Accuracy, identity, and input metadata for derived glucose data."""
+
+    applied_window: GlucoseAggregationWindow
+    comparison_window: GlucoseAggregationWindow | None = None
+    time_zone: str
+    readings_count: int = Field(..., ge=0)
+    is_truncated: bool
+    glucose_revision: str = Field(..., min_length=64, max_length=64)
+    target_range_revision: str = Field(..., min_length=64, max_length=64)
+    calculation_revision: str = Field(..., min_length=64, max_length=64)
+    source_selection: GlucoseAggregationSourceSelection
+    target_range: GlucoseTargetRangeSnapshot
+
+
 class AGPBucket(BaseModel):
     """A single hourly AGP bucket with percentile values."""
 
@@ -234,8 +330,17 @@ class GlucosePercentilesResponse(BaseModel):
     readings_count: int = Field(..., ge=0, description="Total readings used")
     is_truncated: bool = Field(
         False,
-        description="True if readings were capped by server row limit; percentiles may be approximate",
+        description="False for complete results. Incomplete aggregates fail instead of returning partial data.",
     )
+    metadata: GlucoseAggregationMetadata
+
+
+class DashboardGlucoseSummaryResponse(BaseModel):
+    """Atomic V2 glucose statistics and detailed time in range snapshot."""
+
+    statistics: GlucoseStatsResponse
+    time_in_range: TimeInRangeDetailResponse
+    metadata: GlucoseAggregationMetadata
 
 
 class SyncResponse(BaseModel):

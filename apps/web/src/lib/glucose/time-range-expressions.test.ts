@@ -7,6 +7,58 @@ import {
 } from "./time-range-expressions";
 
 describe("resolveRawTimeRange", () => {
+  it("uses one reference instant for both relative range boundaries", () => {
+    const RealDate = Date;
+    const baseMs = RealDate.parse("2026-08-09T12:00:00.000Z");
+    let noArgumentCalls = 0;
+    const dateSpy = jest.spyOn(global, "Date").mockImplementation(
+      (value: string | number | Date) => {
+        if (value === undefined) {
+          noArgumentCalls += 1;
+          return new RealDate(baseMs + noArgumentCalls);
+        }
+        if (typeof value === "string") return new RealDate(value);
+        if (typeof value === "number") return new RealDate(value);
+        return new RealDate(value.getTime());
+      },
+    );
+
+    try {
+      const resolved = resolveRawTimeRange(
+        { from: "now-2160h", to: "now" },
+        { timeZone: "Europe/Stockholm" },
+      );
+
+      expect(resolved).not.toBeNull();
+      expect(noArgumentCalls).toBe(1);
+      expect(
+        new RealDate(resolved!.window.to).getTime() -
+          new RealDate(resolved!.window.from).getTime(),
+      ).toBe(90 * 86_400_000);
+    } finally {
+      dateSpy.mockRestore();
+    }
+  });
+
+  it.each([
+    ["2026-04-15T12:00:00.000Z", "Europe/Stockholm"],
+    ["2026-11-15T12:00:00.000Z", "Europe/Stockholm"],
+  ])(
+    "keeps a 90 day hourly range within the API limit at %s in %s",
+    (now, timeZone) => {
+      const resolved = resolveRawTimeRange(
+        { from: "now-2160h", to: "now" },
+        { now: new Date(now), timeZone },
+      );
+
+      expect(resolved).not.toBeNull();
+      expect(
+        new Date(resolved!.window.to).getTime() -
+          new Date(resolved!.window.from).getTime(),
+      ).toBe(90 * 86_400_000);
+    },
+  );
+
   it("rejects a zero length exact timestamp range", () => {
     expect(
       resolveRawTimeRange(

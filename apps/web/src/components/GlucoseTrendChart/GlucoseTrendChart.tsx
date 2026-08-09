@@ -11,7 +11,11 @@ import {
 import uPlot from "uplot";
 import { Button } from "@/base/Button";
 import { Icon } from "@/base/Icon";
-import type { GlucoseHistoryReading } from "@/lib/api";
+import type {
+  GlucoseHistoryReading,
+  GlucoseSeriesContinuity,
+  GlucoseSeriesReductionMode,
+} from "@/lib/api";
 import { type ChartTimePeriod, PERIOD_TO_MS } from "@/lib/chart-periods";
 import { serializeTimeRangeClipboardValue } from "@/lib/glucose/time-range-clipboard";
 import {
@@ -22,13 +26,16 @@ import {
   type GlucoseUnit,
 } from "@/lib/glucose-units";
 import { twMerge } from "@/lib/ui/twMerge";
-import { useGlucoseHistory } from "@/hooks/use-glucose-history";
-import { usePumpEvents } from "@/hooks/use-pump-events";
-import {
-  useBolusReview,
-  type BolusReviewPeriod,
-} from "@/hooks/use-bolus-review";
+import type { BolusReviewPeriod } from "@/hooks/use-bolus-review";
 import { useOptionalDashboardTimeRange } from "@/components/DashboardTimeRangeProvider";
+import { DashboardQueryStatus } from "@/components/DashboardQueryStatus";
+import { LumoseLoadingLogo } from "@/components/LumoseLoadingLogo";
+import {
+  legacyDashboardChartQueryAdapter,
+  v2DashboardChartQueryAdapter,
+  type DashboardChartQueryData,
+  type DashboardChartQueryAdapter,
+} from "@/components/DashboardChartQueryAdapters/DashboardChartQueryAdapters";
 import { GLUCOSE_THRESHOLDS } from "@/components/GlucoseHero";
 import {
   TREND_ARROWS,
@@ -43,6 +50,7 @@ import {
   getSharedTimeSplits,
 } from "@/lib/charts/chart-axis";
 import { getContinuousGlucosePairs } from "@/lib/charts/glucose-continuity";
+import { resolveGlucoseRenderMode } from "@/lib/charts/glucose-render-mode";
 import {
   resolveChartPalette,
   type ChartPalette,
@@ -90,11 +98,11 @@ const CHART_ERROR_COLOR = "var(--color-signal-error-fill)";
 const MIN_GLUCOSE_MGDL = 20;
 const MAX_GLUCOSE_MGDL = 500;
 const DEFAULT_Y_DOMAIN: [number, number] = [40, 300];
-const AUTO_LINE_MIN_POINT_SPACING_PX = 5;
 const POINT_RADIUS = 3;
 const LINE_WIDTH = 2;
 const HOVER_TIMESTAMP_TOLERANCE_MS = 3 * 60 * 1000;
 const MULTI_DAY_MIN_DURATION_MS = 3 * 24 * 60 * 60 * 1000;
+const GLUCOSE_CHART_HEIGHT_CLASS = "h-56 sm:h-64 md:h-72 lg:h-80";
 
 const PERIODS: { value: ChartTimePeriod; label: string }[] = [
   { value: "3h", label: "3H" },
@@ -164,6 +172,8 @@ interface UplotGlucoseTrendProps {
   ariaLabel: string;
   cursorSyncKey: string;
   data: ChartPoint[];
+  continuity?: GlucoseSeriesContinuity | null;
+  resolutionMode?: GlucoseSeriesReductionMode | null;
   fadeTopAxis: boolean;
   forecastPoints: GlucoseForecastPoint[];
   xDomain: [number, number];
@@ -218,19 +228,6 @@ function transformReadings(readings: GlucoseHistoryReading[]): ChartPoint[] {
     .sort((a, b) => a.timestamp - b.timestamp);
 }
 
-function resolveRenderMode(
-  dataLength: number,
-  width: number,
-): "line" | "points" {
-  if (
-    dataLength > Math.max(1, Math.floor(width / AUTO_LINE_MIN_POINT_SPACING_PX))
-  ) {
-    return "line";
-  }
-
-  return "points";
-}
-
 function interpolateLinePoint(
   from: GlucoseLinePoint,
   to: GlucoseLinePoint,
@@ -249,12 +246,14 @@ export function getGlucoseLineSegments(
   lowThreshold: number,
   highThreshold: number,
   urgentHighThreshold: number,
+  continuity?: GlucoseSeriesContinuity | null,
 ): GlucoseLineSegment[] {
   const segments: GlucoseLineSegment[] = [];
 
   for (const [from, to] of getContinuousGlucosePairs(
     points,
     (point) => point.x * 1000,
+    continuity,
   )) {
     if (
       !Number.isFinite(from.x) ||
@@ -269,12 +268,7 @@ export function getGlucoseLineSegments(
     const crossings =
       valueDelta === 0
         ? []
-        : [
-            urgentLowThreshold,
-            lowThreshold,
-            highThreshold,
-            urgentHighThreshold,
-          ]
+        : [urgentLowThreshold, lowThreshold, highThreshold, urgentHighThreshold]
             .filter(
               (threshold) =>
                 (from.value < threshold && to.value > threshold) ||
@@ -699,6 +693,8 @@ function UplotGlucoseTrend({
   ariaLabel,
   cursorSyncKey,
   data,
+  continuity,
+  resolutionMode,
   fadeTopAxis,
   forecastPoints,
   xDomain,
@@ -810,10 +806,12 @@ function UplotGlucoseTrend({
       lowThreshold,
       highThreshold,
       urgentHighThreshold,
+      continuity,
     );
-    const effectiveRenderMode = resolveRenderMode(
+    const effectiveRenderMode = resolveGlucoseRenderMode(
       data.length,
       dimensions.width,
+      resolutionMode,
     );
     const palette = resolveChartPalette(element);
     const thresholds = {
@@ -967,6 +965,8 @@ function UplotGlucoseTrend({
     cursorSyncKey,
     dimensions.height,
     dimensions.width,
+    continuity,
+    resolutionMode,
     forecastPoints,
     highThreshold,
     lowThreshold,
@@ -983,7 +983,7 @@ function UplotGlucoseTrend({
   // TODO: Revisit keyboard timeline inspection if it becomes a product need.
   return (
     <div
-      className="relative h-56 min-w-0 sm:h-64 md:h-72 lg:h-80"
+      className={twMerge("relative min-w-0", GLUCOSE_CHART_HEIGHT_CLASS)}
       role="img"
       aria-label={ariaLabel}
     >
@@ -1059,7 +1059,7 @@ export function isMultiDayChartDomain(
   return xDomain[1] - xDomain[0] >= MULTI_DAY_MIN_DURATION_MS;
 }
 
-export function GlucoseTrendChart({
+export function GlucoseTrendChartView({
   refreshKey,
   className,
   hasConfiguredPump = false,
@@ -1067,35 +1067,63 @@ export function GlucoseTrendChart({
   forecast,
   unit = "mgdl",
   embedded = false,
-}: GlucoseTrendChartProps) {
+  queryData,
+  onPlotWidthChange,
+  onZoomDomainChange,
+  showUpdatingStatus = true,
+}: GlucoseTrendChartProps & {
+  queryData: DashboardChartQueryData;
+  showUpdatingStatus?: boolean;
+}) {
   const dashboardTimeRange = useOptionalDashboardTimeRange();
   const cursorSyncKey = useId();
-  const { readings, isLoading, error, period, setPeriod, refetch } =
-    useGlucoseHistory("3h", dashboardTimeRange?.currentWindow);
+  const {
+    readings,
+    continuity,
+    resolutionMode,
+    isLoading,
+    isUpdating,
+    hasBackgroundError,
+    error,
+    period,
+    setPeriod,
+    refetch,
+  } = queryData.glucose;
   const {
     data: insulinReview,
     isLoading: isInsulinLoading,
-    error: insulinError,
+    isUpdating: isInsulinUpdating,
+    hasBackgroundError: hasInsulinBackgroundError,
+    error: insulinQueryError,
     setPeriod: setInsulinPeriod,
     refetch: refetchInsulin,
-  } = useBolusReview(
-    getInsulinPeriod(period),
-    dashboardTimeRange?.currentWindow,
-    500,
-  );
+  } = queryData.insulin;
   const {
     events: pumpEvents,
     hasPumpHistory,
     isLoading: isPumpLoading,
-    error: pumpError,
+    isUpdating: isPumpUpdating,
+    hasBackgroundError: hasPumpBackgroundError,
+    error: pumpQueryError,
     isPossiblyTruncated,
     refetch: refetchPump,
-  } = usePumpEvents(period, dashboardTimeRange?.currentWindow);
+  } = queryData.pump;
   const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
+  const handleZoomChange = useCallback(
+    (domain: [number, number] | null) => {
+      setZoomDomain(domain);
+      onZoomDomainChange?.(domain);
+    },
+    [onZoomDomainChange],
+  );
   const [copyError, setCopyError] = useState<string | null>(null);
   const [timelineHover, setTimelineHover] =
     useState<CombinedTimelineHover | null>(null);
+  const insulinError = insulinReview ? null : insulinQueryError;
+  const pumpError = pumpEvents.length > 0 ? null : pumpQueryError;
   const prevRefreshKeyRef = useRef(refreshKey);
+  const [plotWidthElement, setPlotWidthElement] =
+    useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (
@@ -1111,10 +1139,10 @@ export function GlucoseTrendChart({
   }, [refreshKey, refetch, refetchInsulin, refetchPump]);
 
   useEffect(() => {
-    setZoomDomain(null);
+    handleZoomChange(null);
     setCopyError(null);
     setTimelineHover(null);
-  }, [dashboardTimeRange?.currentWindow]);
+  }, [dashboardTimeRange?.currentWindow, handleZoomChange]);
 
   const data = useMemo(() => transformReadings(readings), [readings]);
   const doseTimelineData = useMemo(
@@ -1212,12 +1240,7 @@ export function GlucoseTrendChart({
     thresholds?.urgentHigh ?? GLUCOSE_THRESHOLDS.URGENT_HIGH;
   const yDomain = useMemo(
     () =>
-      resolveGlucoseYDomain(
-        data,
-        forecastPoints,
-        lowThreshold,
-        highThreshold,
-      ),
+      resolveGlucoseYDomain(data, forecastPoints, lowThreshold, highThreshold),
     [data, forecastPoints, highThreshold, lowThreshold],
   );
   const hoverRangeStatus = timelineHover?.glucose
@@ -1260,14 +1283,40 @@ export function GlucoseTrendChart({
     className,
   );
 
+  useEffect(() => {
+    const element = plotWidthElement;
+    if (!element || !onPlotWidthChange) return undefined;
+
+    const updatePlotWidth = () => {
+      const style = window.getComputedStyle(element);
+      const horizontalPadding =
+        Number.parseFloat(style.paddingLeft || "0") +
+        Number.parseFloat(style.paddingRight || "0");
+      const width = Math.floor(
+        element.clientWidth - horizontalPadding - CHART_Y_AXIS_SIZE_PX,
+      );
+      if (width > 0) onPlotWidthChange(width);
+    };
+
+    updatePlotWidth();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updatePlotWidth);
+      return () => window.removeEventListener("resize", updatePlotWidth);
+    }
+
+    const observer = new ResizeObserver(updatePlotWidth);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [onPlotWidthChange, plotWidthElement]);
+
   const handlePeriodChange = useCallback(
     (nextPeriod: ChartTimePeriod) => {
       setPeriod(nextPeriod);
       setInsulinPeriod(getInsulinPeriod(nextPeriod));
-      setZoomDomain(null);
+      handleZoomChange(null);
       setTimelineHover(null);
     },
-    [setInsulinPeriod, setPeriod],
+    [handleZoomChange, setInsulinPeriod, setPeriod],
   );
 
   const copyZoomRange = useCallback(async () => {
@@ -1599,7 +1648,7 @@ export function GlucoseTrendChart({
       multiDay={multiDay}
       onHoverChange={handleDoseTimelineHover}
       onRetry={refetchInsulin}
-      onZoomChange={setZoomDomain}
+      onZoomChange={handleZoomChange}
       rapidDoses={doseTimelineData.rapidDoses}
       sectionHeaderSeparator={embedded}
       showXAxis={false}
@@ -1611,7 +1660,7 @@ export function GlucoseTrendChart({
       cursorSyncKey={cursorSyncKey}
       multiDay={multiDay}
       onHoverChange={handleInsulinOnBoardHover}
-      onZoomChange={setZoomDomain}
+      onZoomChange={handleZoomChange}
       samples={insulinOnBoardSamples}
       sectionHeaderSeparator={embedded}
       showXAxis={!showPumpBasalTimeline && !showActivityTimeline}
@@ -1627,7 +1676,7 @@ export function GlucoseTrendChart({
       multiDay={multiDay}
       onHoverChange={handlePumpTimelineHover}
       onRetry={refetchPump}
-      onZoomChange={setZoomDomain}
+      onZoomChange={handleZoomChange}
       sectionHeaderSeparator={embedded}
       segments={pumpTimelineData.basalSegments}
       showXAxis={!showActivityTimeline}
@@ -1640,7 +1689,7 @@ export function GlucoseTrendChart({
       intervals={pumpTimelineData.activityIntervals}
       multiDay={multiDay}
       onHoverChange={handlePumpTimelineHover}
-      onZoomChange={setZoomDomain}
+      onZoomChange={handleZoomChange}
       sectionHeaderSeparator={embedded}
       showXAxis
       suspensionIntervals={pumpTimelineData.suspensionIntervals}
@@ -1671,19 +1720,52 @@ export function GlucoseTrendChart({
     return (
       <div
         className={containerClassName}
+        ref={setPlotWidthElement}
         role="region"
         aria-label="Loading glucose trend chart"
         aria-busy="true"
         data-testid="glucose-trend-chart"
       >
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="h-6 w-40 animate-pulse rounded-panel bg-surface-tertiary" />
-          <div className="h-8 w-48 animate-pulse rounded-panel bg-surface-tertiary" />
+          {embedded ? null : (
+            <>
+              <div className="h-6 w-40 animate-pulse rounded-panel bg-surface-tertiary" />
+              <div className="h-8 w-48 animate-pulse rounded-panel bg-surface-tertiary" />
+            </>
+          )}
         </div>
         <div className="relative">
           {doseTimeline}
           {glucoseSectionHeader}
-          <div className="h-64 animate-pulse rounded-panel bg-surface-secondary" />
+          <div className="relative" data-testid="glucose-chart-loading-surface">
+            <UplotGlucoseTrend
+              ariaLabel="Loading glucose readings"
+              cursorSyncKey={cursorSyncKey}
+              data={[]}
+              continuity={null}
+              resolutionMode={null}
+              fadeTopAxis={embedded}
+              forecastPoints={[]}
+              xDomain={xDomain}
+              yDomain={yDomain}
+              urgentLowThreshold={urgentLowThreshold}
+              lowThreshold={lowThreshold}
+              highThreshold={highThreshold}
+              urgentHighThreshold={urgentHighThreshold}
+              unit={unit}
+              multiDay={multiDay}
+              showXAxis={showGlucoseXAxis}
+              onHoverChange={handleGlucoseHover}
+              onZoomChange={handleZoomChange}
+            />
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <LumoseLoadingLogo
+                className="h-8 w-8"
+                decorative
+                label="Loading glucose readings"
+              />
+            </div>
+          </div>
           {insulinOnBoardTimeline}
           {pumpBasalTimeline}
           {activityTimeline}
@@ -1697,6 +1779,7 @@ export function GlucoseTrendChart({
     return (
       <div
         className={containerClassName}
+        ref={setPlotWidthElement}
         role="region"
         aria-label="Glucose trend chart"
         data-testid="glucose-trend-chart"
@@ -1721,7 +1804,12 @@ export function GlucoseTrendChart({
         <div className="relative">
           {doseTimeline}
           {glucoseSectionHeader}
-          <div className="flex h-64 flex-col items-center justify-center gap-3 text-foreground-secondary">
+          <div
+            className={twMerge(
+              "flex flex-col items-center justify-center gap-3 text-foreground-secondary",
+              GLUCOSE_CHART_HEIGHT_CLASS,
+            )}
+          >
             <p>Unable to load glucose history</p>
             <Button
               type="button"
@@ -1744,6 +1832,7 @@ export function GlucoseTrendChart({
     return (
       <div
         className={containerClassName}
+        ref={setPlotWidthElement}
         role="region"
         aria-label="Glucose trend chart"
         data-testid="glucose-trend-chart"
@@ -1761,7 +1850,12 @@ export function GlucoseTrendChart({
         <div className="relative">
           {doseTimeline}
           {glucoseSectionHeader}
-          <div className="flex h-64 items-center justify-center text-foreground-secondary">
+          <div
+            className={twMerge(
+              "flex items-center justify-center text-foreground-secondary",
+              GLUCOSE_CHART_HEIGHT_CLASS,
+            )}
+          >
             <p>No glucose readings yet</p>
           </div>
           {insulinOnBoardTimeline}
@@ -1776,10 +1870,23 @@ export function GlucoseTrendChart({
   return (
     <div
       className={containerClassName}
+      ref={setPlotWidthElement}
       role="region"
       aria-label={`Glucose trend chart, ${dashboardTimeRange?.label ?? period} view`}
       data-testid="glucose-trend-chart"
     >
+      <DashboardQueryStatus
+        hasBackgroundError={
+          hasBackgroundError ||
+          hasInsulinBackgroundError ||
+          hasPumpBackgroundError
+        }
+        isUpdating={
+          showUpdatingStatus &&
+          (isUpdating || isInsulinUpdating || isPumpUpdating)
+        }
+        rangeLabel={dashboardTimeRange?.label}
+      />
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           {embedded ? null : (
@@ -1800,7 +1907,7 @@ export function GlucoseTrendChart({
               </Button>
               <Button
                 type="button"
-                onClick={() => setZoomDomain(null)}
+                onClick={() => handleZoomChange(null)}
                 className="flex items-center gap-1 rounded-panel bg-surface-secondary px-2 py-1 font_metric_caption text-foreground-primary transition-colors hover:bg-surface-tertiary"
                 aria-label="Reset zoom"
               >
@@ -1829,6 +1936,8 @@ export function GlucoseTrendChart({
           ariaLabel={`Glucose readings for ${dashboardTimeRange?.label ?? period}`}
           cursorSyncKey={cursorSyncKey}
           data={data}
+          continuity={continuity}
+          resolutionMode={resolutionMode}
           fadeTopAxis={embedded}
           forecastPoints={forecastPoints}
           xDomain={xDomain}
@@ -1841,7 +1950,7 @@ export function GlucoseTrendChart({
           multiDay={multiDay}
           showXAxis={showGlucoseXAxis}
           onHoverChange={handleGlucoseHover}
-          onZoomChange={setZoomDomain}
+          onZoomChange={handleZoomChange}
         />
         {insulinOnBoardTimeline}
         {pumpBasalTimeline}
@@ -1849,6 +1958,48 @@ export function GlucoseTrendChart({
         {combinedTooltip}
       </div>
     </div>
+  );
+}
+
+function GlucoseTrendChartContent({
+  queryAdapter,
+  ...props
+}: GlucoseTrendChartProps & { queryAdapter: DashboardChartQueryAdapter }) {
+  const dashboardTimeRange = useOptionalDashboardTimeRange();
+  const glucose = queryAdapter.useGlucoseHistory(
+    "3h",
+    dashboardTimeRange?.currentWindow,
+  );
+  const insulin = queryAdapter.useBolusReview(
+    getInsulinPeriod(glucose.period),
+    dashboardTimeRange?.currentWindow,
+    500,
+  );
+  const pump = queryAdapter.usePumpEvents(
+    glucose.period,
+    dashboardTimeRange?.currentWindow,
+  );
+
+  return (
+    <GlucoseTrendChartView {...props} queryData={{ glucose, insulin, pump }} />
+  );
+}
+
+export function GlucoseTrendChart(props: GlucoseTrendChartProps) {
+  return (
+    <GlucoseTrendChartContent
+      {...props}
+      queryAdapter={legacyDashboardChartQueryAdapter}
+    />
+  );
+}
+
+export function V2GlucoseTrendChart(props: GlucoseTrendChartProps) {
+  return (
+    <GlucoseTrendChartContent
+      {...props}
+      queryAdapter={v2DashboardChartQueryAdapter}
+    />
   );
 }
 

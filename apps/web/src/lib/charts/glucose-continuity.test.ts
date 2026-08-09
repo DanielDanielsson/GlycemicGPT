@@ -50,4 +50,37 @@ describe("getContinuousGlucosePairs", () => {
       ),
     ).toEqual([[afterGap, nextReading]]);
   });
+
+  it("connects sparse reduced points when the raw series has no gap", () => {
+    const first = point(0, 100);
+    const second = point(60 * 60 * 1000, 110);
+
+    expect(
+      getContinuousGlucosePairs(
+        [first, second],
+        (item) => item.timestampMs,
+        { gaps: [] },
+      ),
+    ).toEqual([[first, second]]);
+  });
+
+  it("does not connect reduced points across an authoritative raw gap", () => {
+    const first = point(0, 100);
+    const second = point(60 * 60 * 1000, 110);
+
+    expect(
+      getContinuousGlucosePairs(
+        [first, second],
+        (item) => item.timestampMs,
+        {
+          gaps: [
+            {
+              start: new Date(10 * 60 * 1000).toISOString(),
+              end: new Date(30 * 60 * 1000).toISOString(),
+            },
+          ],
+        },
+      ),
+    ).toEqual([]);
+  });
 });

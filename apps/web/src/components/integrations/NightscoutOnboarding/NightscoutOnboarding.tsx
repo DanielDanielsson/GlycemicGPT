@@ -20,6 +20,8 @@ import { LumoseLoadingLogo } from "@/components/LumoseLoadingLogo";
 import { PasswordTextInput } from "@/components/PasswordTextInput";
 import { SelectField } from "@/components/SelectField";
 import { TextInput } from "@/components/TextInput";
+import { useDashboardInvalidation } from "@/hooks/dashboard-query";
+import { GLUCOSE_DATA_RESOURCES } from "@/lib/query/dashboard";
 import {
   applyNightscoutOnboarding,
   createNightscoutConnection,
@@ -377,6 +379,7 @@ function deriveInitialState(connectionParam: string | null): WizardState {
 export function NightscoutOnboarding(_props: NightscoutOnboardingProps = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { invalidateResources } = useDashboardInvalidation();
   // Read once at mount. Changing the URL mid-wizard doesn't re-seed
   // (intentional: avoids state thrash if the user copy-pastes a link
   // into the same tab while the wizard is in flight).
@@ -587,6 +590,10 @@ export function NightscoutOnboarding(_props: NightscoutOnboardingProps = {}) {
     dispatch({ type: "apply/start" });
     try {
       const result = await applyNightscoutOnboarding(state.connectionId, body);
+      await invalidateResources([
+        ...GLUCOSE_DATA_RESOURCES,
+        "glucose-range",
+      ]).catch(() => undefined);
       dispatch({ type: "apply/success", result });
     } catch (err) {
       dispatch({
@@ -602,6 +609,7 @@ export function NightscoutOnboarding(_props: NightscoutOnboardingProps = {}) {
     state.initialSyncWindowDays,
     state.confirmUnitsUnknown,
     state.isApplying,
+    invalidateResources,
   ]);
 
   return (

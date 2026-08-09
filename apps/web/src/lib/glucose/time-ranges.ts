@@ -1,6 +1,6 @@
 import type { ChartTimePeriod } from "@/lib/chart-periods";
 
-export type TimeRange = ChartTimePeriod;
+export type TimeRange = ChartTimePeriod | "60d" | "90d";
 
 export const GLUCOSE_TIME_RANGES: { key: TimeRange; label: string; hours: number }[] = [
   { key: "3h", label: "3 hours", hours: 3 },
@@ -11,6 +11,8 @@ export const GLUCOSE_TIME_RANGES: { key: TimeRange; label: string; hours: number
   { key: "7d", label: "7 days", hours: 168 },
   { key: "14d", label: "14 days", hours: 336 },
   { key: "30d", label: "30 days", hours: 720 },
+  { key: "60d", label: "60 days", hours: 1440 },
+  { key: "90d", label: "90 days", hours: 2160 },
 ];
 
 export function getTimeRangeHours(range: string | null | undefined): number | null {

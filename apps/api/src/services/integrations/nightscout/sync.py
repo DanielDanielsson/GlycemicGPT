@@ -72,6 +72,10 @@ logger = get_logger(__name__)
 # can have tens of thousands of rows per day.
 _DEVICESTATUS_INITIAL_CAP_DAYS = 30
 
+NIGHTSCOUT_CREDENTIAL_DECRYPTION_ERROR = (
+    "Stored Nightscout credential could not be decrypted"
+)
+
 # Per-connection in-flight guard. Two concurrent sync calls for the
 # same connection (manual button + scheduler tick, or two browser tabs)
 # would both fetch the same window upstream, double the API calls, and
@@ -192,12 +196,16 @@ async def sync_nightscout_for_connection(
     process; cross-replica concurrency is bounded by scheduler tick
     spacing in Story 43.4.
     """
-    lock = _lock_for(conn.id)
+    # Capture the identifier before entering work that can be cancelled. A
+    # cancelled transaction can expire ORM attributes, so reading `conn.id`
+    # from the `finally` block may otherwise trigger a failed lazy load.
+    connection_id = conn.id
+    lock = _lock_for(connection_id)
     async with lock:
         try:
             return await _do_sync(session, conn)
         finally:
-            _release_lock(conn.id, lock)
+            _release_lock(connection_id, lock)
 
 
 async def _do_sync(session: AsyncSession, conn: NightscoutConnection) -> SyncResult:
@@ -226,10 +234,18 @@ async def _do_sync(session: AsyncSession, conn: NightscoutConnection) -> SyncRes
     new_entry_object_id: str | None = None
 
     try:
+        try:
+            credential = decrypt_optional_credential(conn.encrypted_credential)
+        except ValueError as exc:
+            # A credential encrypted with a missing or rotated key cannot recover
+            # without user action. Classify it as an authentication failure so the
+            # scheduler pauses the connection instead of retrying every minute.
+            raise NightscoutAuthError(NIGHTSCOUT_CREDENTIAL_DECRYPTION_ERROR) from exc
+
         async with await NightscoutClient.create(
             base_url=conn.base_url,
             auth_type=conn.auth_type,
-            credential=decrypt_optional_credential(conn.encrypted_credential),
+            credential=credential,
             api_version=conn.api_version,
         ) as client:
             entries = await client.fetch_entries(

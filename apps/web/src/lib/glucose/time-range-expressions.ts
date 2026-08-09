@@ -54,6 +54,7 @@ export const DASHBOARD_QUICK_RANGES: QuickRangeOption[] = [
   { from: 'now-2d', to: 'now', display: 'Last 2 days' },
   { from: 'now-7d', to: 'now', display: 'Last 7 days' },
   { from: 'now-30d', to: 'now', display: 'Last 30 days' },
+  { from: 'now-60d', to: 'now', display: 'Last 60 days' },
   { from: 'now-90d', to: 'now', display: 'Last 90 days' },
   { from: 'now-6M', to: 'now', display: 'Last 6 months' },
   { from: 'now-1y', to: 'now', display: 'Last 1 year' },
@@ -204,6 +205,21 @@ function addDateMathOperation(date: Date, operation: DateMathOperation): Date {
   return next;
 }
 
+function addDateMathOperationToInstant(
+  date: Date,
+  operation: DateMathOperation,
+  timeZone: string
+): Date {
+  if (operation.unit === 'm' || operation.unit === 'h') {
+    const unitMs = operation.unit === 'm' ? 60_000 : 3_600_000;
+    return new Date(date.getTime() + operation.sign * operation.amount * unitMs);
+  }
+
+  const wallDate = localPartsToWallDate(getLocalParts(date, timeZone));
+  const nextWallDate = addDateMathOperation(wallDate, operation);
+  return new Date(localPartsToUtcIso(wallDateToLocalParts(nextWallDate), timeZone));
+}
+
 function getWeekStart(date: Date): Date {
   const next = new Date(date.getTime());
   const day = next.getUTCDay();
@@ -325,18 +341,25 @@ export function resolveDateMathExpression(
 
   const fiscalYearStartMonth = options.fiscalYearStartMonth ?? 0;
   const now = options.now ?? new Date();
-  let wallDate = localPartsToWallDate(getLocalParts(now, options.timeZone));
+  let instant = new Date(now.getTime());
 
   for (const operation of parseOperations(match[1] ?? '')) {
-    wallDate = addDateMathOperation(wallDate, operation);
+    instant = addDateMathOperationToInstant(instant, operation, options.timeZone);
   }
 
   const roundUnit = match[2] as DateMathUnit | undefined;
   if (roundUnit) {
-    wallDate = roundDate(wallDate, roundUnit, Boolean(options.roundUp), fiscalYearStartMonth);
+    const wallDate = localPartsToWallDate(getLocalParts(instant, options.timeZone));
+    const roundedWallDate = roundDate(
+      wallDate,
+      roundUnit,
+      Boolean(options.roundUp),
+      fiscalYearStartMonth
+    );
+    return localPartsToUtcIso(wallDateToLocalParts(roundedWallDate), options.timeZone);
   }
 
-  return localPartsToUtcIso(wallDateToLocalParts(wallDate), options.timeZone);
+  return instant.toISOString();
 }
 
 export function resolveTimeRangeInput(
@@ -411,14 +434,15 @@ export function resolveRawTimeRange(
     fiscalYearStartMonth?: number;
   }
 ): ResolvedTimeRangeInput | null {
+  const now = options.now ?? new Date();
   const from = resolveTimeRangeInput(raw.from, {
-    now: options.now,
+    now,
     roundUp: false,
     timeZone: options.timeZone,
     fiscalYearStartMonth: options.fiscalYearStartMonth
   });
   const to = resolveTimeRangeInput(raw.to, {
-    now: options.now,
+    now,
     roundUp: true,
     timeZone: options.timeZone,
     fiscalYearStartMonth: options.fiscalYearStartMonth

@@ -13,6 +13,7 @@ import {
   ComposedChart,
   Scatter,
   Line,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -33,7 +34,7 @@ import { type ChartTimePeriod, PERIOD_TO_MS, isMultiDay } from "@/lib/chart-peri
 import { formatGlucose, unitLabel, type GlucoseUnit } from "@/lib/glucose-units";
 import { GLUCOSE_THRESHOLDS, prettySourceName } from "./glucose-hero";
 import { useGlucoseHistory } from "@/hooks/use-glucose-history";
-import { usePumpEvents } from "@/hooks/use-pump-events";
+import { useLegacyPumpEvents } from "@/hooks/use-legacy-pump-events";
 import { TREND_ARROWS, TREND_DESCRIPTIONS, type TrendDirection } from "./trend-arrow";
 import { mapBackendTrendToFrontend } from "@/hooks/use-glucose-stream";
 
@@ -73,6 +74,8 @@ export { PERIOD_TO_MS };
 
 // Max visual points for chart rendering (LTTB target)
 const MAX_CHART_POINTS = 500;
+// Max basal segments rendered by the legacy Recharts implementation.
+const MAX_BASAL_SEGMENTS = 500;
 // Max bolus markers to display (keeps largest when exceeded)
 const MAX_BOLUS_MARKERS = 50;
 // Minimum zoom window (15 minutes) to prevent accidental micro-zooms
@@ -124,7 +127,7 @@ interface BolusPoint {
   bgAtEvent: number | null;
 }
 
-interface BasalPoint {
+export interface BasalPoint {
   timestamp: number;
   rate: number;
   value: number; // alias for rate -- LTTB compatibility
@@ -217,6 +220,170 @@ function transformBasalEvents(events: PumpEventReading[]): BasalPoint[] {
       basalAdjustmentPct: e.basal_adjustment_pct,
     }))
     .sort((a, b) => a.timestamp - b.timestamp);
+}
+
+function basalPresentationKey(point: BasalPoint): string {
+  return `${point.pumpActivityMode ?? "none"}:${point.isAutomated}`;
+}
+
+/**
+ * Bound the legacy chart's SVG work while retaining pump mode boundaries.
+ * Recharts creates a separate SVG region for every basal point, so rendering
+ * an unbounded 30 day pump history can lock the browser's main thread.
+ */
+export function buildLegacyBasalChartData(
+  events: PumpEventReading[],
+  maxSegments = MAX_BASAL_SEGMENTS,
+): BasalPoint[] {
+  const points = transformBasalEvents(events);
+  if (points.length <= maxSegments) return points;
+
+  const runs: BasalPoint[][] = [];
+  for (const point of points) {
+    const currentRun = runs.at(-1);
+    if (
+      currentRun &&
+      basalPresentationKey(currentRun[0]) === basalPresentationKey(point)
+    ) {
+      currentRun.push(point);
+    } else {
+      runs.push([point]);
+    }
+  }
+
+  const minimumTargets = runs.map((run) => Math.min(run.length, 2));
+  const minimumTotal = minimumTargets.reduce((sum, count) => sum + count, 0);
+  if (minimumTotal > maxSegments) {
+    return lttbDownsample(points, maxSegments);
+  }
+
+  const capacities = runs.map(
+    (run, index) => run.length - minimumTargets[index],
+  );
+  const totalCapacity = capacities.reduce((sum, count) => sum + count, 0);
+  let remaining = maxSegments - minimumTotal;
+  const extras = capacities.map((capacity) =>
+    totalCapacity === 0
+      ? 0
+      : Math.floor((remaining * capacity) / totalCapacity),
+  );
+  remaining -= extras.reduce((sum, count) => sum + count, 0);
+
+  const remainderOrder = capacities
+    .map((capacity, index) => ({
+      index,
+      remainder:
+        totalCapacity === 0
+          ? 0
+          : ((maxSegments - minimumTotal) * capacity) % totalCapacity,
+    }))
+    .sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+
+  for (const { index } of remainderOrder) {
+    if (remaining === 0) break;
+    if (extras[index] < capacities[index]) {
+      extras[index] += 1;
+      remaining -= 1;
+    }
+  }
+
+  return runs.flatMap((run, index) =>
+    lttbDownsample(run, minimumTargets[index] + extras[index]),
+  );
+}
+
+export interface LegacyBasalModeOverlay {
+  start: number;
+  end: number;
+  mode: "sleep" | "exercise";
+  color: string;
+}
+
+export interface LegacyBasalAreaSeries {
+  start: number;
+  color: string;
+  points: Array<BasalPoint | LegacyBasalAreaGap>;
+}
+
+interface LegacyBasalAreaGap {
+  timestamp: number;
+  rate: null;
+  value: null;
+}
+
+/** Group all runs of each pump mode color into one discontinuous area path. */
+export function buildLegacyBasalAreaSeries(
+  points: BasalPoint[],
+  rangeEnd: number,
+): LegacyBasalAreaSeries[] {
+  const runs: LegacyBasalAreaSeries[] = [];
+
+  for (const point of points) {
+    const current = runs.at(-1);
+    const color = getBasalModeColor(point.pumpActivityMode, point.isAutomated);
+    if (current?.color === color) {
+      current.points.push(point);
+    } else {
+      runs.push({ start: point.timestamp, color, points: [point] });
+    }
+  }
+
+  const seriesByColor = new Map<string, LegacyBasalAreaSeries>();
+  runs.forEach((run, index) => {
+    const lastPoint = run.points.at(-1)! as BasalPoint;
+    const end = Math.max(
+      lastPoint.timestamp,
+      runs[index + 1]?.start ?? rangeEnd,
+    );
+    const series = seriesByColor.get(run.color) ?? {
+      start: run.start,
+      color: run.color,
+      points: [],
+    };
+    series.points.push(...run.points);
+    if (end > lastPoint.timestamp) {
+      series.points.push({ ...lastPoint, timestamp: end });
+    }
+    series.points.push({ timestamp: end, rate: null, value: null });
+    seriesByColor.set(run.color, series);
+  });
+
+  return [...seriesByColor.values()];
+}
+
+/** Merge adjacent mode samples into one background region per mode run. */
+export function buildLegacyBasalModeOverlays(
+  points: BasalPoint[],
+  rangeEnd: number,
+): LegacyBasalModeOverlay[] {
+  const overlays: LegacyBasalModeOverlay[] = [];
+
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index];
+    const mode =
+      point.pumpActivityMode === "sleep"
+        ? "sleep"
+        : point.pumpActivityMode === "exercise" ||
+            point.pumpActivityMode === "activity"
+          ? "exercise"
+          : null;
+    if (mode === null) continue;
+
+    const end = points[index + 1]?.timestamp ?? rangeEnd;
+    const previous = overlays.at(-1);
+    if (previous?.mode === mode && previous.end === point.timestamp) {
+      previous.end = end;
+    } else {
+      overlays.push({
+        start: point.timestamp,
+        end,
+        mode,
+        color: MODE_COLORS[mode],
+      });
+    }
+  }
+
+  return overlays;
 }
 
 // --- Custom tooltip ---
@@ -636,7 +803,8 @@ export function GlucoseTrendChart({
 }: GlucoseTrendChartProps) {
   const { readings, isLoading, error, period, setPeriod, refetch } =
     useGlucoseHistory("3h");
-  const { events: pumpEvents, refetch: refetchPump } = usePumpEvents(period);
+  const { events: pumpEvents, refetch: refetchPump } =
+    useLegacyPumpEvents(period);
 
   // Zoom state
   const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
@@ -707,15 +875,10 @@ export function GlucoseTrendChart({
   }, [period, forecast, data]);
 
   const bolusData = useMemo(() => transformBolusEvents(pumpEvents), [pumpEvents]);
-  const basalData = useMemo(() => {
-    const points = transformBasalEvents(pumpEvents);
-    // NOTE: Do NOT LTTB-downsample basal data. LTTB selects points based on
-    // rate value changes and would silently drop mode transitions (e.g., auto
-    // -> sleep) when the rate doesn't change. We keep all points to preserve
-    // accurate mode overlay coloring. The per-segment ReferenceArea rendering
-    // naturally clips to the visible domain.
-    return points;
-  }, [pumpEvents]);
+  const basalData = useMemo(
+    () => buildLegacyBasalChartData(pumpEvents),
+    [pumpEvents],
+  );
 
   const displayBolus = useMemo(() => {
     if (bolusData.length <= MAX_BOLUS_MARKERS) return bolusData;
@@ -767,6 +930,14 @@ export function GlucoseTrendChart({
 
   // When zoomed, use the zoom domain; otherwise show the full period
   const xDomain = zoomDomain ?? fullDomain;
+  const basalModeOverlays = useMemo(
+    () => buildLegacyBasalModeOverlays(basalData, xDomain[1]),
+    [basalData, xDomain],
+  );
+  const basalAreaSeries = useMemo(
+    () => buildLegacyBasalAreaSeries(basalData, xDomain[1]),
+    [basalData, xDomain],
+  );
 
   // Refs for zoom interaction state (declared early so callbacks can reference them)
   const gridElRef = useRef<Element | null>(null);
@@ -1115,46 +1286,37 @@ export function GlucoseTrendChart({
             />
 
             {/* Mode overlay bands -- full-height colored bands for sleep/exercise modes */}
-            {basalData.map((b, i) => {
-              const m = b.pumpActivityMode;
-              if (m !== "sleep" && m !== "exercise" && m !== "activity") return null;
-              const nextTs = i + 1 < basalData.length ? basalData[i + 1].timestamp : xDomain[1];
-              const color = m === "sleep" ? MODE_COLORS.sleep : MODE_COLORS.exercise;
-              return (
-                <ReferenceArea
-                  key={`mode-${b.timestamp}`}
-                  yAxisId="glucose"
-                  x1={b.timestamp}
-                  x2={nextTs}
-                  y1={yDomain[0]}
-                  y2={yDomain[1]}
-                  fill={color}
-                  fillOpacity={0.06}
-                  stroke="none"
-                />
-              );
-            })}
+            {basalModeOverlays.map((overlay) => (
+              <ReferenceArea
+                key={`mode-${overlay.start}`}
+                yAxisId="glucose"
+                x1={overlay.start}
+                x2={overlay.end}
+                y1={yDomain[0]}
+                y2={yDomain[1]}
+                fill={overlay.color}
+                fillOpacity={0.06}
+                stroke="none"
+              />
+            ))}
 
-            {/* Basal rate segments -- color-coded by pump mode */}
-            {basalData.map((b, i) => {
-              const nextTs = i + 1 < basalData.length ? basalData[i + 1].timestamp : xDomain[1];
-              const color = getBasalModeColor(b.pumpActivityMode, b.isAutomated);
-              return (
-                <ReferenceArea
-                  key={`basal-${b.timestamp}`}
-                  yAxisId="insulin"
-                  x1={b.timestamp}
-                  x2={nextTs}
-                  y1={0}
-                  y2={b.rate}
-                  fill={color}
-                  fillOpacity={0.15}
-                  stroke={color}
-                  strokeOpacity={0.6}
-                  strokeWidth={1}
-                />
-              );
-            })}
+            {/* Basal rate series, grouped by pump mode to avoid one SVG region per sample */}
+            {basalAreaSeries.map((series) => (
+              <Area
+                key={`basal-${series.start}`}
+                yAxisId="insulin"
+                data={series.points}
+                dataKey="rate"
+                type="stepAfter"
+                fill={series.color}
+                fillOpacity={0.15}
+                stroke={series.color}
+                strokeOpacity={0.6}
+                strokeWidth={1}
+                connectNulls={false}
+                isAnimationActive={false}
+              />
+            ))}
 
             {/* Glucose scatter points -- smaller dots for multi-day views */}
             <Scatter yAxisId="glucose" data={data} shape="circle" isAnimationActive={false}>

@@ -47,6 +47,70 @@ beforeEach(async () => {
 });
 
 describe("mock API handlers", () => {
+  it("returns compact glucose percentiles for an exact range", async () => {
+    const end = new Date();
+    const start = new Date(end.getTime() - 2 * 24 * 60 * 60 * 1000);
+    const params = new URLSearchParams({
+      start: start.toISOString(),
+      end: end.toISOString(),
+      tz: "UTC",
+    });
+    const response = await fetch(
+      `http://localhost:3003/api/integrations/glucose/percentiles?${params}`,
+    );
+    const body = (await response.json()) as {
+      buckets: unknown[];
+      period_days: number;
+      readings_count: number;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.period_days).toBe(2);
+    expect(body.buckets).toHaveLength(24);
+    expect(body.readings_count).toBeGreaterThan(0);
+  });
+
+  it("returns an atomic dashboard glucose summary for an exact range", async () => {
+    const end = new Date();
+    const start = new Date(end.getTime() - 2 * 24 * 60 * 60 * 1000);
+    const params = new URLSearchParams({
+      start: start.toISOString(),
+      end: end.toISOString(),
+      tz: "Europe/Stockholm",
+    });
+    const response = await fetch(
+      `http://localhost:3003/api/integrations/glucose/dashboard-summary?${params}`,
+    );
+    const body = (await response.json()) as {
+      statistics: { readings_count: number };
+      time_in_range: { readings_count: number };
+      metadata: { time_zone: string; is_truncated: boolean };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.statistics.readings_count).toBeGreaterThan(0);
+    expect(body.time_in_range.readings_count).toBe(
+      body.statistics.readings_count,
+    );
+    expect(body.metadata).toMatchObject({
+      time_zone: "Europe/Stockholm",
+      is_truncated: false,
+    });
+  });
+
+  it("rejects invalid dashboard summary timezone values", async () => {
+    const params = new URLSearchParams({
+      start: "2026-08-01T00:00:00.000Z",
+      end: "2026-08-03T00:00:00.000Z",
+      tz: "Not/A_Timezone",
+    });
+    const response = await fetch(
+      `http://localhost:3003/api/integrations/glucose/dashboard-summary?${params}`,
+    );
+
+    expect(response.status).toBe(422);
+  });
+
   it("paginates the configured knowledge base documents", async () => {
     const { setMockRuntimeState } = await import("./state");
     setMockRuntimeState({ knowledgeDocumentCount: 45 });
@@ -582,6 +646,62 @@ describe("mock API handlers", () => {
     expect(
       timeInRange.buckets.reduce((total, bucket) => total + bucket.readings, 0),
     ).toBe(history.count);
+  });
+
+  it("serves the explicit glucose series contract and validates its budget", async () => {
+    const end = new Date();
+    const params = new URLSearchParams({
+      start: new Date(end.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+      end: end.toISOString(),
+      maxDataPoints: "48",
+    });
+    const response = await fetch(
+      `http://localhost:3003/api/integrations/glucose/series?${params}`,
+    );
+    const body = (await response.json()) as {
+      readings: unknown[];
+      metadata: {
+        requested_max_data_points: number;
+        returned_point_count: number;
+        timeline_revision: string;
+      };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.readings.length).toBeLessThanOrEqual(48);
+    expect(body.metadata).toMatchObject({
+      requested_max_data_points: 48,
+      returned_point_count: body.readings.length,
+    });
+    expect(body.metadata.timeline_revision).toMatch(/^[a-f0-9]{64}$/);
+
+    params.set(
+      "start",
+      new Date(end.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+    );
+    const supportedRange = await fetch(
+      `http://localhost:3003/api/integrations/glucose/series?${params}`,
+    );
+    expect(supportedRange.status).toBe(200);
+
+    params.set(
+      "start",
+      new Date(end.getTime() - 91 * 24 * 60 * 60 * 1000).toISOString(),
+    );
+    const oversizedRange = await fetch(
+      `http://localhost:3003/api/integrations/glucose/series?${params}`,
+    );
+    expect(oversizedRange.status).toBe(422);
+
+    params.set(
+      "start",
+      new Date(end.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+    );
+    params.set("maxDataPoints", "3");
+    const invalid = await fetch(
+      `http://localhost:3003/api/integrations/glucose/series?${params}`,
+    );
+    expect(invalid.status).toBe(422);
   });
 
   it("describes API routes without explicit handlers", () => {

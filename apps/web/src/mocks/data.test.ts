@@ -2,8 +2,11 @@ import {
   buildActiveAlerts,
   buildBolusReview,
   buildCgmSources,
+  buildDashboardGlucoseSummary,
   buildForecast,
   buildGlucoseHistoryResponse,
+  buildGlucosePercentiles,
+  buildGlucoseSeriesResponse,
   buildGlucoseStats,
   buildInsulinSummary,
   buildMockInsightDetail,
@@ -158,6 +161,111 @@ describe("mock data generator", () => {
     });
   });
 
+  it("builds compact percentiles for an exact date range", () => {
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    const snapshot = buildMockDataSnapshot(baseState, now);
+    const result = buildGlucosePercentiles(
+      snapshot,
+      new URLSearchParams({
+        start: "2026-07-04T12:00:00.000Z",
+        end: now.toISOString(),
+        tz: "UTC",
+      }),
+    );
+
+    expect(result.period_days).toBe(2);
+    expect(result.buckets).toHaveLength(24);
+    expect(result.readings_count).toBeGreaterThan(0);
+    expect(result.readings_count).toBeLessThan(snapshot.glucoseHistory.length);
+  });
+
+  it("returns complete percentiles without truncation", () => {
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    const snapshot = buildMockDataSnapshot(
+      { ...baseState, cgmBackfillDays: MOCK_CGM_BACKFILL_MAX_DAYS },
+      now,
+    );
+    const result = buildGlucosePercentiles(
+      snapshot,
+      new URLSearchParams({
+        start: new Date(
+          now.getTime() -
+            (MOCK_CGM_BACKFILL_MAX_DAYS + 1) * 24 * 60 * 60 * 1000,
+        ).toISOString(),
+        end: now.toISOString(),
+        tz: "UTC",
+      }),
+    );
+
+    expect(result.period_days).toBe(MOCK_CGM_BACKFILL_MAX_DAYS + 1);
+    expect(result.is_truncated).toBe(false);
+    expect(result.metadata?.is_truncated).toBe(false);
+  });
+
+  it("groups percentile readings in the requested IANA timezone", () => {
+    const snapshot = {
+      ...buildMockDataSnapshot(baseState, new Date("2026-01-02T00:00:00.000Z")),
+      glucoseHistory: [
+        {
+          value: 120,
+          reading_timestamp: "2026-01-01T00:30:00.000Z",
+          trend: "Flat",
+          trend_rate: 0,
+          received_at: "2026-01-01T00:30:01.000Z",
+          source: "dexcom",
+        },
+      ],
+    };
+    const range = {
+      start: "2026-01-01T00:00:00.000Z",
+      end: "2026-01-02T00:00:00.000Z",
+    };
+
+    const utc = buildGlucosePercentiles(
+      snapshot,
+      new URLSearchParams({ ...range, tz: "UTC" }),
+    );
+    const losAngeles = buildGlucosePercentiles(
+      snapshot,
+      new URLSearchParams({ ...range, tz: "America/Los_Angeles" }),
+    );
+
+    expect(utc.buckets[0]?.count).toBe(1);
+    expect(losAngeles.buckets[16]?.count).toBe(1);
+  });
+
+  it("builds one coherent dashboard summary matching standalone builders", () => {
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    const snapshot = buildMockDataSnapshot(baseState, now);
+    const params = new URLSearchParams({
+      start: "2026-07-04T12:00:00.000Z",
+      end: now.toISOString(),
+      tz: "Europe/Stockholm",
+    });
+
+    const summary = buildDashboardGlucoseSummary(snapshot, params);
+
+    expect(summary.statistics).toEqual(buildGlucoseStats(snapshot, params));
+    expect(summary.time_in_range).toEqual(
+      buildTimeInRangeDetail(snapshot, params),
+    );
+    expect(summary.metadata).toMatchObject({
+      applied_window: {
+        start: "2026-07-04T12:00:00.000Z",
+        end: now.toISOString(),
+      },
+      comparison_window: {
+        start: "2026-07-02T12:00:00.000Z",
+        end: "2026-07-04T12:00:00.000Z",
+      },
+      time_zone: "Europe/Stockholm",
+      is_truncated: false,
+    });
+    expect(summary.metadata.glucose_revision).toHaveLength(64);
+    expect(summary.metadata.target_range_revision).toHaveLength(64);
+    expect(summary.metadata.calculation_revision).toHaveLength(64);
+  });
+
   it("supports a one year CGM backfill at five minute cadence", () => {
     const snapshot = buildMockDataSnapshot(
       { ...baseState, cgmBackfillDays: MOCK_CGM_BACKFILL_MAX_DAYS },
@@ -178,7 +286,7 @@ describe("mock data generator", () => {
         end: snapshot.glucoseHistory.at(-1)!.reading_timestamp,
       }),
     );
-    expect(stats.readings_count).toBe(snapshot.glucoseHistory.length);
+    expect(stats.readings_count).toBe(snapshot.glucoseHistory.length - 1);
     expect(stats.min_glucose).toBeLessThanOrEqual(stats.max_glucose);
   });
 
@@ -273,6 +381,184 @@ describe("mock data generator", () => {
     expect(response.readings[0].reading_timestamp).toBe(
       "2026-07-05T12:05:00.000Z",
     );
+  });
+
+  it("builds deterministic resolution aware glucose series", () => {
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    const snapshot = buildMockDataSnapshot(baseState, now);
+    const params = new URLSearchParams({
+      start: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+      end: now.toISOString(),
+      maxDataPoints: "40",
+    });
+
+    const first = buildGlucoseSeriesResponse(snapshot, params);
+    const second = buildGlucoseSeriesResponse(snapshot, params);
+
+    expect(first).toEqual(second);
+    expect(first.metadata).toMatchObject({
+      requested_max_data_points: 40,
+      raw_reading_count: 288,
+      reduction_mode: "reduced",
+      source_selection: { requested: "primary", excluded_sources: [] },
+      continuity: { max_gap_ms: 900_000, gaps: [] },
+    });
+    expect(first.metadata.timeline_revision).toMatch(/^[a-f0-9]{64}$/);
+    expect(first.readings.length).toBeLessThanOrEqual(40);
+    expect(first.metadata.returned_point_count).toBe(first.readings.length);
+    expect(first.readings).toEqual(
+      [...first.readings].sort(
+        (left, right) =>
+          new Date(left.reading_timestamp).getTime() -
+          new Date(right.reading_timestamp).getTime(),
+      ),
+    );
+  });
+
+  it("keeps mock series extrema that share a timestamp", () => {
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    const snapshot = buildMockDataSnapshot(baseState, now);
+    const reading = snapshot.glucoseHistory.at(-1)!;
+    const start = new Date(now.getTime() - 20 * 60 * 1000);
+    const sameTimestamp = new Date(
+      start.getTime() + 5 * 60 * 1000,
+    ).toISOString();
+    const glucoseHistory = [
+      { ...reading, value: 100, reading_timestamp: start.toISOString() },
+      { ...reading, value: 20, reading_timestamp: sameTimestamp },
+      { ...reading, value: 500, reading_timestamp: sameTimestamp },
+      {
+        ...reading,
+        value: 120,
+        reading_timestamp: new Date(
+          start.getTime() + 10 * 60 * 1000,
+        ).toISOString(),
+      },
+      {
+        ...reading,
+        value: 125,
+        reading_timestamp: new Date(
+          start.getTime() + 15 * 60 * 1000,
+        ).toISOString(),
+      },
+      {
+        ...reading,
+        value: 130,
+        reading_timestamp: new Date(
+          start.getTime() + 19 * 60 * 1000,
+        ).toISOString(),
+      },
+    ];
+    const series = buildGlucoseSeriesResponse(
+      { ...snapshot, glucoseHistory },
+      new URLSearchParams({
+        start: start.toISOString(),
+        end: now.toISOString(),
+        maxDataPoints: "4",
+      }),
+    );
+
+    expect(series.readings.map((item) => item.value)).toEqual([
+      100, 20, 500, 130,
+    ]);
+  });
+
+  it("filters secondary mock readings before series reduction", () => {
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    const snapshot = buildMockDataSnapshot(baseState, now);
+    const primary = snapshot.glucoseHistory.at(-2)!;
+    const latest = snapshot.glucoseHistory.at(-1)!;
+    const secondarySource = "nightscout:secondary";
+    const glucoseHistory = [
+      primary,
+      { ...primary, value: 220, source: secondarySource },
+      latest,
+      { ...latest, value: 230, source: secondarySource },
+    ];
+    const params = new URLSearchParams({
+      start: new Date(now.getTime() - 10 * 60 * 1000).toISOString(),
+      end: new Date(now.getTime() + 1).toISOString(),
+      maxDataPoints: "20",
+    });
+
+    const primarySeries = buildGlucoseSeriesResponse(
+      { ...snapshot, glucoseHistory },
+      params,
+    );
+    params.set("include_secondary", "true");
+    const combinedSeries = buildGlucoseSeriesResponse(
+      { ...snapshot, glucoseHistory },
+      params,
+    );
+
+    expect(primarySeries.readings).toHaveLength(2);
+    expect(
+      primarySeries.readings.every((item) => item.source === primary.source),
+    ).toBe(true);
+    expect(primarySeries.metadata.source_selection).toEqual({
+      requested: "primary",
+      excluded_sources: [secondarySource],
+    });
+    expect(combinedSeries.readings).toHaveLength(4);
+    expect(combinedSeries.metadata.source_selection).toEqual({
+      requested: "primary_and_secondary",
+      excluded_sources: [],
+    });
+  });
+
+  it("changes the mock timeline revision when an earlier reading changes", () => {
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    const snapshot = buildMockDataSnapshot(baseState, now);
+    const params = new URLSearchParams({
+      start: new Date(now.getTime() - 60 * 60 * 1000).toISOString(),
+      end: now.toISOString(),
+      maxDataPoints: "40",
+    });
+    const first = buildGlucoseSeriesResponse(snapshot, params);
+    const changedHistory = snapshot.glucoseHistory.map((reading, index) =>
+      index === snapshot.glucoseHistory.length - 5
+        ? { ...reading, value: reading.value + 1 }
+        : reading,
+    );
+    const second = buildGlucoseSeriesResponse(
+      { ...snapshot, glucoseHistory: changedHistory },
+      params,
+    );
+
+    expect(second.metadata.timeline_revision).not.toBe(
+      first.metadata.timeline_revision,
+    );
+  });
+
+  it("retains true raw data gaps in reduced mock series", () => {
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    const snapshot = buildMockDataSnapshot(baseState, now);
+    const gapStart = new Date(now.getTime() - 12 * 60 * 60 * 1000);
+    const gapEnd = new Date(gapStart.getTime() + 30 * 60 * 1000);
+    const snapshotWithGap = {
+      ...snapshot,
+      glucoseHistory: snapshot.glucoseHistory.filter((reading) => {
+        const timestamp = new Date(reading.reading_timestamp).getTime();
+        return timestamp <= gapStart.getTime() || timestamp >= gapEnd.getTime();
+      }),
+    };
+    const params = new URLSearchParams({
+      start: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+      end: now.toISOString(),
+      maxDataPoints: "40",
+    });
+
+    const series = buildGlucoseSeriesResponse(snapshotWithGap, params);
+
+    expect(series.metadata.continuity).toEqual({
+      max_gap_ms: 900_000,
+      gaps: [
+        {
+          start: gapStart.toISOString(),
+          end: gapEnd.toISOString(),
+        },
+      ],
+    });
   });
 
   it("calculates glucose aggregates from the complete selected range", () => {

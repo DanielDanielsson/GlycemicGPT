@@ -6,7 +6,7 @@ import type {
 import type { QuickRangeOption } from "@/lib/glucose/time-range-expressions";
 import type { TimeRange } from "@/lib/glucose/time-ranges";
 
-export type QuickTimeRange = TimeRange | "90d";
+export type QuickTimeRange = TimeRange;
 
 export interface DashboardTimeRangePickerProps {
   selection: HistorySelection;

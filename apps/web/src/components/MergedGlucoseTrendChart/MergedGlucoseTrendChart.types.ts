@@ -1,5 +1,10 @@
 import type { GlucoseUnit } from "@/lib/glucose-units";
-import type { ForecastReadResponse } from "@/lib/api";
+import type {
+  ForecastReadResponse,
+  GlucoseSeriesContinuity,
+  GlucoseSeriesReductionMode,
+} from "@/lib/api";
+import type { ChartZoomChangeHandler } from "@/lib/charts/chart-zoom";
 import type { TrendDirection } from "@/components/TrendArrow";
 import type { GlucoseForecastPoint } from "@/components/GlucoseForecast";
 import type {
@@ -22,6 +27,8 @@ export interface MergedGlucoseTrendChartProps {
     urgentHigh: number;
   };
   unit?: GlucoseUnit;
+  onPlotWidthChange?: (width: number) => void;
+  onZoomDomainChange?: ChartZoomChangeHandler;
 }
 
 export interface MergedGlucosePoint {
@@ -44,6 +51,8 @@ export interface MergedChartStatus {
 export interface MergedChartModel {
   activityIntervals: PumpActivityInterval[];
   basalSegments: PumpBasalSegment[];
+  continuity?: GlucoseSeriesContinuity | null;
+  resolutionMode?: GlucoseSeriesReductionMode | null;
   doses: MergedDoseEvent[];
   forecast: ForecastReadResponse | null | undefined;
   forecastEligible: boolean;
@@ -73,4 +82,7 @@ export interface MergedDoseMarkerLayout {
 export interface MergedChartRendererProps {
   className?: string;
   model: MergedChartModel;
+  onPlotWidthChange?: (width: number) => void;
+  onZoomDomainChange?: ChartZoomChangeHandler;
+  showLoadingStatus?: boolean;
 }

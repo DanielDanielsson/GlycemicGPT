@@ -377,6 +377,35 @@ class TestGlucoseFilteringByPrimary:
             )
             assert both.json()["readings_count"] == 40
 
+            end = datetime.now(UTC) + timedelta(seconds=1)
+            start = end - timedelta(days=1)
+            summary_params = {
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "tz": "UTC",
+            }
+            summary_primary = await client.get(
+                "/api/integrations/glucose/dashboard-summary",
+                params=summary_params,
+                cookies={settings.jwt_cookie_name: cookie},
+            )
+            summary_both = await client.get(
+                "/api/integrations/glucose/dashboard-summary",
+                params={**summary_params, "include_secondary": "true"},
+                cookies={settings.jwt_cookie_name: cookie},
+            )
+
+            assert summary_primary.json()["statistics"]["readings_count"] == 20
+            assert summary_primary.json()["metadata"]["source_selection"] == {
+                "requested": "primary",
+                "excluded_sources": [f"nightscout:{ns_id}"],
+            }
+            assert summary_both.json()["statistics"]["readings_count"] == 40
+            assert summary_both.json()["metadata"]["source_selection"] == {
+                "requested": "primary_and_secondary",
+                "excluded_sources": [],
+            }
+
     async def test_single_source_not_filtered(self):
         # AC4: with one CGM source, no filtering happens.
         async with AsyncClient(

@@ -1,10 +1,10 @@
 export {
   GlucoseTrendChart,
+  GlucoseTrendChartView,
+  V2GlucoseTrendChart,
   PERIOD_TO_MS,
   getPointColor,
   getWholeMmolAxisSplits,
   isMultiDayChartDomain,
 } from "./GlucoseTrendChart";
-export type {
-  GlucoseTrendChartProps,
-} from "./GlucoseTrendChart.types";
+export type { GlucoseTrendChartProps } from "./GlucoseTrendChart.types";

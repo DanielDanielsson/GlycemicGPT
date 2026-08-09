@@ -2,14 +2,18 @@ import { Button } from "@/base/Button";
 import type { MergedChartStatus } from "./MergedGlucoseTrendChart.types";
 
 export function MergedChartStatusMessages({
+  showLoading = true,
   statuses,
 }: {
+  showLoading?: boolean;
   statuses: MergedChartStatus[];
 }) {
   const errors = statuses.filter((status) => status.error);
-  const loadingLabels = statuses
-    .filter((status) => status.isLoading)
-    .map((status) => status.label);
+  const loadingLabels = showLoading
+    ? statuses
+        .filter((status) => status.isLoading)
+        .map((status) => status.label)
+    : [];
 
   const hasMessages = errors.length > 0 || loadingLabels.length > 0;
 

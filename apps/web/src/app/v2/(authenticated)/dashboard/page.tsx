@@ -2,18 +2,7 @@
 import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  getCgmSources,
-  getGlookoStatus,
-  getMedtronicConnectStatus,
-  listIntegrations,
-  listNightscoutConnections,
-  type CgmSourcesResponse,
-  type GlookoStatus,
-  type IntegrationResponse,
-  type MedtronicConnectStatus,
-  type NightscoutConnectionResponse,
-} from "@/lib/api";
+import { useQueryClient } from "@tanstack/react-query";
 import { AnimatedCard } from "@/components/AnimatedCard";
 import { PageTransition } from "@/components/PageTransition";
 import { Panel } from "@/components/Panel";
@@ -23,11 +12,8 @@ import {
   type LoopStatusInfo,
 } from "@/components/GlucoseHero";
 import { ConnectionStatusBanner } from "@/components/ConnectionStatusBanner";
-import { GlucoseTrendChart } from "@/components/GlucoseTrendChart";
-import { MergedGlucoseTrendChart } from "@/components/MergedGlucoseTrendChart";
 import { CgmSummaryStats } from "@/components/CgmSummaryStats";
-import { AgpChart } from "@/components/AgpChart";
-import { InsulinSummaryStats } from "@/components/InsulinSummaryStats";
+import { V2InsulinSummaryStats } from "@/components/InsulinSummaryStats";
 import { DataSourcesFreshnessCard } from "@/components/DataSourcesFreshnessCard";
 import { LivePumpStats } from "@/components/LivePumpStats";
 import { GlucoseUnitSeedNotice } from "@/components/GlucoseUnitSeedNotice";
@@ -35,17 +21,22 @@ import {
   DashboardTimeRangePicker,
   DashboardTimeRangeQuickSelect,
 } from "@/components/DashboardTimeRangePicker";
+import { DashboardQueryStatus } from "@/components/DashboardQueryStatus";
 import { useDashboardTimeRange } from "@/components/DashboardTimeRangeProvider";
+import { DashboardChartPanels } from "@/compositions/DashboardChartPanels";
 
 import { useGlucoseStreamContext } from "@/providers/glucose-stream-provider";
 import { useUserContext } from "@/providers/user-provider";
 import { useGlucoseUnit } from "@/hooks/use-glucose-unit";
-import { useTimeInRangeDetailStats } from "@/hooks/use-time-in-range-stats";
-import { useGlucoseStats } from "@/hooks/use-glucose-stats";
-import { useGlucoseRange } from "@/hooks/use-glucose-range";
-import { usePumpStatus } from "@/hooks/use-pump-status";
-import { useForecast } from "@/hooks/use-forecast";
+import {
+  useDashboardConnectionFreshness,
+  useDashboardForecast,
+  useDashboardGlucoseRange,
+  useDashboardGlucoseSummary,
+  useDashboardPumpStatus,
+} from "@/hooks/dashboard-query";
 import { hasNightscoutPumpHint } from "@/lib/pump/pump-history-context";
+import { invalidateDashboardResources } from "@/lib/query/dashboard";
 import type { LoopStatusResponse } from "@/lib/api";
 /**
  * Map the backend's loop_status payload to the component's
@@ -70,17 +61,24 @@ function mapLoopStatus(
 function DashboardPageContent() {
   const router = useRouter();
   const dashboardTimeRange = useDashboardTimeRange();
+  const selectionKindRef = useRef(dashboardTimeRange.selection.kind);
+  selectionKindRef.current = dashboardTimeRange.selection.kind;
   const { user, isLoading: isUserLoading } = useUserContext();
+  const queryClient = useQueryClient();
   const unit = useGlucoseUnit();
   // All hooks must be called before any early return
   const { glucose, isLive, isReconnecting, error, reconnect } =
     useGlucoseStreamContext();
   // Chart refresh: throttle to once per 5 minutes when new SSE data arrives
   const [chartRefreshKey, setChartRefreshKey] = useState(0);
-  const lastRefreshRef = useRef(0);
+  const lastRefreshRef = useRef<number | null>(null);
   useEffect(() => {
     if (glucose?.reading_timestamp) {
       const now = Date.now();
+      if (lastRefreshRef.current === null) {
+        lastRefreshRef.current = now;
+        return;
+      }
       if (now - lastRefreshRef.current > 5 * 60 * 1000) {
         lastRefreshRef.current = now;
         setChartRefreshKey((k) => k + 1);
@@ -89,91 +87,47 @@ function DashboardPageContent() {
   }, [glucose?.reading_timestamp]);
   // Fetch user's configured glucose range thresholds (always mg/dL; display
   // converts to the active unit).
-  const glucoseThresholds = useGlucoseRange();
+  const glucoseThresholds = useDashboardGlucoseRange();
   // Fetch latest pump status (basal, battery, reservoir) for hero card
-  const pumpStatus = usePumpStatus(chartRefreshKey);
-  // The forecast shares the chart's SSE-driven `chartRefreshKey` so the dotted line
-  // refreshes on the same cadence as the underlying readings.
-  const { forecast } = useForecast(chartRefreshKey);
-  // Per-source freshness for the "Data Sources" card, fetched once on mount
-  // and every 30 seconds after that.
-  const [nightscoutConnections, setNightscoutConnections] = useState<
-    NightscoutConnectionResponse[]
-  >([]);
-  const [dexcomIntegration, setDexcomIntegration] =
-    useState<IntegrationResponse | null>(null);
-  const [tandemIntegration, setTandemIntegration] =
-    useState<IntegrationResponse | null>(null);
-  const [cgmSources, setCgmSources] = useState<CgmSourcesResponse | null>(null);
-  const [glookoStatus, setGlookoStatus] = useState<GlookoStatus | null>(null);
-  const [medtronicStatus, setMedtronicStatus] =
-    useState<MedtronicConnectStatus | null>(null);
-  const [sourcesLoadFailed, setSourcesLoadFailed] = useState(false);
-  const hasLoadedSourcesRef = useRef(false);
+  const pumpStatus = useDashboardPumpStatus();
+  // The forecast is invalidated with the other current timeline data whenever the
+  // throttled SSE refresh key changes.
+  const {
+    forecast,
+    isUpdating: forecastUpdating,
+    hasBackgroundError: forecastBackgroundError,
+  } = useDashboardForecast();
+  const {
+    nightscoutConnections,
+    dexcomIntegration,
+    tandemIntegration,
+    cgmSources,
+    glookoStatus,
+    medtronicStatus,
+    sourcesLoadFailed,
+    isUpdating: connectionsUpdating,
+    hasBackgroundError: connectionsBackgroundError,
+  } = useDashboardConnectionFreshness();
+
   useEffect(() => {
-    let cancelled = false;
-    const refetch = async () => {
-      try {
-        const [
-          integrationsResult,
-          nsResult,
-          cgmSourcesResult,
-          glookoResult,
-          medtronicResult,
-        ] = await Promise.allSettled([
-          listIntegrations(),
-          listNightscoutConnections(),
-          getCgmSources(),
-          getGlookoStatus(),
-          getMedtronicConnectStatus(),
-        ]);
-        if (cancelled) return;
-        const anyFulfilled = [
-          integrationsResult,
-          nsResult,
-          cgmSourcesResult,
-          glookoResult,
-          medtronicResult,
-        ].some((result) => result.status === "fulfilled");
-        if (!hasLoadedSourcesRef.current || anyFulfilled) {
-          setSourcesLoadFailed(!anyFulfilled);
-          hasLoadedSourcesRef.current = true;
-        }
-        if (integrationsResult.status === "fulfilled") {
-          const data = integrationsResult.value;
-          setDexcomIntegration(
-            data.integrations.find((i) => i.integration_type === "dexcom") ||
-              null,
-          );
-          setTandemIntegration(
-            data.integrations.find((i) => i.integration_type === "tandem") ||
-              null,
-          );
-        }
-        if (nsResult.status === "fulfilled") {
-          setNightscoutConnections(nsResult.value.connections);
-        }
-        if (cgmSourcesResult.status === "fulfilled") {
-          setCgmSources(cgmSourcesResult.value);
-        }
-        if (glookoResult.status === "fulfilled") {
-          setGlookoStatus(glookoResult.value);
-        }
-        if (medtronicResult.status === "fulfilled") {
-          setMedtronicStatus(medtronicResult.value);
-        }
-      } catch {
-        // Best-effort: leaving stale state during a transient API blip
-        // is preferable to clobbering the rendered freshness rows.
-      }
-    };
-    void refetch();
-    const refetchInterval = setInterval(() => void refetch(), 30_000);
-    return () => {
-      cancelled = true;
-      clearInterval(refetchInterval);
-    };
-  }, []);
+    if (!user?.id || chartRefreshKey === 0) return;
+    const resources = [
+      "glucose-series",
+      "glucose-history",
+      "bolus-review",
+      "pump-events",
+      "pump-status",
+      "forecast",
+      ...(selectionKindRef.current === "preset"
+        ? (["glucose-percentiles", "glucose-summary"] as const)
+        : []),
+    ] as const;
+    void invalidateDashboardResources(queryClient, user.id, resources).catch(
+      () => {
+        // Individual query hooks expose background refresh failures.
+      },
+    );
+  }, [chartRefreshKey, queryClient, user?.id]);
   // Redirect caregivers to the caregiver-specific dashboard.
   useEffect(() => {
     if (user?.role === "caregiver") {
@@ -181,16 +135,13 @@ function DashboardPageContent() {
     }
   }, [user, router]);
   const {
-    stats: tirStats,
-    isLoading: tirLoading,
-    error: tirError,
-  } = useTimeInRangeDetailStats("24h", dashboardTimeRange.currentWindow);
-  const {
-    stats: cgmStats,
+    statistics: cgmStats,
+    timeInRange: tirStats,
     isLoading: cgmLoading,
+    isUpdating: cgmUpdating,
+    hasBackgroundError: cgmBackgroundError,
     error: cgmError,
-    period: cgmPeriod,
-  } = useGlucoseStats("24h", dashboardTimeRange.currentWindow);
+  } = useDashboardGlucoseSummary(dashboardTimeRange.currentWindow);
   // Prevent flash of diabetic dashboard while caregiver redirect is pending
   if (isUserLoading || user?.role === "caregiver") {
     return null;
@@ -240,6 +191,18 @@ function DashboardPageContent() {
         />
         {/* One-time smart-default glucose-unit notice */}
         <GlucoseUnitSeedNotice />
+        <DashboardQueryStatus
+          hasBackgroundError={
+            pumpStatus.hasBackgroundError ||
+            forecastBackgroundError ||
+            glucoseThresholds.hasBackgroundError
+          }
+          isUpdating={
+            pumpStatus.isUpdating ||
+            forecastUpdating ||
+            glucoseThresholds.isUpdating
+          }
+        />
         {/* Top status panels for live data and configured connections */}
         <AnimatedCard
           className="grid grid-cols-1 gap-dashboard-panel-gap lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.6fr)_minmax(0,1fr)]"
@@ -297,6 +260,10 @@ function DashboardPageContent() {
             heading="Live Connections"
             className="hidden min-w-0 lg:block"
           >
+            <DashboardQueryStatus
+              hasBackgroundError={connectionsBackgroundError}
+              isUpdating={connectionsUpdating}
+            />
             {sourcesLoadFailed ? (
               <div className="space-y-3">
                 <p className="font_body_3 text-foreground-primary">
@@ -343,7 +310,7 @@ function DashboardPageContent() {
           <div className="w-full">
             <div className="w-full lg:hidden">
               <DashboardTimeRangeQuickSelect
-                ranges={["3h", "24h", "3d", "7d"]}
+                ranges={["3h", "6h", "12h", "24h"]}
                 selection={dashboardTimeRange.selection}
                 timeZone={dashboardTimeRange.timeZone}
                 onChange={dashboardTimeRange.setSelection}
@@ -354,73 +321,46 @@ function DashboardPageContent() {
                 selection={dashboardTimeRange.selection}
                 currentWindow={dashboardTimeRange.currentWindow}
                 timeZone={dashboardTimeRange.timeZone}
-                maxRangeDays={31}
+                maxRangeDays={90}
                 onChange={dashboardTimeRange.setSelection}
               />
             </div>
           </div>
         </div>
-        {/* Mobile glucose trend chart */}
-        <AnimatedCard className="lg:hidden" delay={0.1}>
-          <Panel
-            disableHeaderMobile
-            fullWidthMobile
-            heading="Merged Glucose Trend"
-            bodyClassName="p-0 sm:p-0"
-            className="min-w-0"
-          >
-            <MergedGlucoseTrendChart
-              forecast={forecast}
-              refreshKey={chartRefreshKey}
-              hasConfiguredPump={hasConfiguredPump}
-              thresholds={glucoseThresholds}
-              unit={unit}
-            />
-          </Panel>
-        </AnimatedCard>
-        {/* Desktop glucose trend chart */}
-        <AnimatedCard className="hidden lg:block" delay={0.12}>
-          <Panel
-            heading="Glucose Trend"
-            bodyClassName="p-0 sm:p-0"
-            className="min-w-0"
-          >
-            <GlucoseTrendChart
-              refreshKey={chartRefreshKey}
-              hasConfiguredPump={hasConfiguredPump}
-              thresholds={glucoseThresholds}
-              forecast={forecast}
-              unit={unit}
-              embedded
-            />
-          </Panel>
-        </AnimatedCard>
-        {/* CGM and insulin summaries */}
-        <AnimatedCard
-          className="grid grid-cols-1 gap-dashboard-panel-gap lg:grid-cols-2"
-          delay={0.15}
+        <DashboardChartPanels
+          forecast={forecast}
+          hasConfiguredPump={hasConfiguredPump}
+          thresholds={glucoseThresholds}
+          unit={unit}
         >
-          <CgmSummaryStats
-            stats={cgmStats}
-            isLoading={cgmLoading}
-            error={cgmError}
-            period={cgmPeriod}
-            className="h-full"
-            unit={unit}
-            timeInRange={{
-              buckets: tirStats?.buckets ?? null,
-              readingsCount: tirStats?.readings_count ?? 0,
-              previousBuckets: tirStats?.previous_buckets ?? null,
-              previousReadingsCount: tirStats?.previous_readings_count ?? null,
-              error: tirError,
-              isLoading: tirLoading,
-            }}
-          />
-          <InsulinSummaryStats className="h-full" />
-        </AnimatedCard>
-        <AnimatedCard delay={0.2}>
-          <AgpChart thresholds={glucoseThresholds} unit={unit} />
-        </AnimatedCard>
+          {/* CGM and insulin summaries */}
+          <AnimatedCard
+            className="grid grid-cols-1 gap-dashboard-panel-gap lg:grid-cols-2"
+            delay={0.15}
+          >
+            <CgmSummaryStats
+              stats={cgmStats}
+              isLoading={cgmLoading}
+              isUpdating={cgmUpdating}
+              hasBackgroundError={cgmBackgroundError}
+              rangeLabel={dashboardTimeRange.label}
+              error={cgmError}
+              period="24h"
+              className="h-full"
+              unit={unit}
+              timeInRange={{
+                buckets: tirStats?.buckets ?? null,
+                readingsCount: tirStats?.readings_count ?? 0,
+                previousBuckets: tirStats?.previous_buckets ?? null,
+                previousReadingsCount:
+                  tirStats?.previous_readings_count ?? null,
+                error: cgmError,
+                isLoading: cgmLoading,
+              }}
+            />
+            <V2InsulinSummaryStats className="h-full" />
+          </AnimatedCard>
+        </DashboardChartPanels>
       </div>
     </PageTransition>
   );

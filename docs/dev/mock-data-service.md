@@ -40,7 +40,7 @@ If the header is missing, mock mode does not start. The app follows the normal a
 
 ## How It Works
 
-The web app uses [Mock Service Worker](https://mswjs.io/) in development. MSW registers a service worker in the browser and intercepts network requests that match configured handlers. The app still calls the same URLs it normally calls, such as `/api/integrations/glucose/history` or `/api/integrations/pump/status`. When mock mode is active, MSW catches those requests and returns generated JSON instead of allowing the browser to send the request to the real backend.
+The web app uses [Mock Service Worker](https://mswjs.io/) in development. MSW registers a service worker in the browser and intercepts network requests that match configured handlers. The app still calls the same URLs it normally calls, such as `/api/integrations/glucose/series`, `/api/integrations/glucose/history`, or `/api/integrations/pump/status`. When mock mode is active, MSW catches those requests and returns generated JSON instead of allowing the browser to send the request to the real backend.
 
 The implementation lives in `apps/web/src/mocks`:
 
@@ -66,16 +66,16 @@ The mock service does not write to the real backend. It stores temporary mock st
 
 When mock mode is active:
 
-1. The dashboard asks the normal API client for glucose history.
-2. The browser sends a request to `/api/integrations/glucose/history?minutes=1440&limit=288`.
+1. The redesigned dashboard timeline asks the normal API client for a glucose series after measuring the chart plot width.
+2. The browser sends a request to `/api/integrations/glucose/series` with exact `start`, `end`, and `maxDataPoints` query parameters.
 3. MSW matches that route in `handlers.ts`.
 4. The handler reads the current mock runtime state from `localStorage`.
-5. `data.ts` generates a CGM history response using the primary selected CGM connection.
-6. The dashboard receives a normal `GlucoseHistoryResponse` and renders as if it came from the real API.
+5. `data.ts` selects the requested readings and applies the same deterministic, excursion preserving point budget used by the real endpoint.
+6. The dashboard receives a normal `GlucoseSeriesResponse` and renders as if it came from the real API.
 
 The dashboard does not need special mock specific code. It only sees the same API contract it already uses.
 
-Glucose history, glucose stats, and time in range endpoints filter the same generated readings by the requested start and end timestamps. History responses still honor their pagination limit. Aggregate stats and time in range calculations use every reading in the selected window when no limit is requested, so their counts and percentages match the glucose trend range.
+Glucose series, glucose history, glucose stats, time in range, AGP percentiles, and the V2 dashboard glucose summary filter the same generated readings by the requested start and end timestamps. Series responses strictly honor their point budget while retaining each bucket's first, minimum, maximum, and last readings. History responses still honor their pagination limit. AGP percentiles group complete eligible readings by hour in the requested IANA timezone. The combined V2 summary returns statistics, current and previous time in range, target thresholds, exact windows, source selection, and opaque revision metadata as one coherent response. Aggregate calculations use every eligible reading in the selected window, so their counts and percentages match the selected range.
 
 ## Example Glucose Reading Mock
 

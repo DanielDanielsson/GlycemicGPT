@@ -13,15 +13,26 @@ import { MergedGlucoseTrendSurface } from "./MergedGlucoseTrendSurface";
 export function DesktopMergedGlucoseTrendChart({
   className,
   model,
+  onPlotWidthChange,
+  onZoomDomainChange,
+  showLoadingStatus = true,
 }: MergedChartRendererProps) {
   const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
   const xDomain = zoomDomain ?? model.fullDomain;
 
+  const handleZoomChange = useCallback(
+    (domain: [number, number] | null) => {
+      setZoomDomain(domain);
+      onZoomDomainChange?.(domain);
+    },
+    [onZoomDomainChange],
+  );
+
   useEffect(() => {
-    setZoomDomain(null);
+    handleZoomChange(null);
     setCopyError(null);
-  }, [model.rangeSelectionKey]);
+  }, [handleZoomChange, model.rangeSelectionKey]);
 
   const copyZoomRange = useCallback(async () => {
     if (!zoomDomain) {
@@ -33,7 +44,7 @@ export function DesktopMergedGlucoseTrendChart({
         serializeTimeRangeClipboardValue({
           from: new Date(zoomDomain[0]).toISOString(),
           to: new Date(zoomDomain[1]).toISOString(),
-        })
+        }),
       );
       setCopyError(null);
     } catch {
@@ -46,7 +57,10 @@ export function DesktopMergedGlucoseTrendChart({
       className={twMerge("min-w-0 px-4 py-4", className)}
       data-testid="desktop-merged-glucose-trend"
     >
-      <MergedChartStatusMessages statuses={model.statuses} />
+      <MergedChartStatusMessages
+        showLoading={showLoadingStatus}
+        statuses={model.statuses}
+      />
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <MergedChartLegend model={model} />
         {zoomDomain ? (
@@ -60,7 +74,7 @@ export function DesktopMergedGlucoseTrendChart({
             </Button>
             <Button
               className="flex items-center gap-1 rounded-button bg-surface-secondary px-2 py-1 font_metric_caption text-foreground-primary hover:bg-surface-tertiary"
-              onClick={() => setZoomDomain(null)}
+              onClick={() => handleZoomChange(null)}
             >
               <Icon icon="zoom-out" decorative className="size-3.5" />
               Reset Time Range
@@ -69,7 +83,10 @@ export function DesktopMergedGlucoseTrendChart({
         ) : null}
       </div>
       {copyError ? (
-        <p className="mb-2 font_metric_caption text-signal-warning-text" role="alert">
+        <p
+          className="mb-2 font_metric_caption text-signal-warning-text"
+          role="alert"
+        >
           {copyError}
         </p>
       ) : null}
@@ -77,7 +94,8 @@ export function DesktopMergedGlucoseTrendChart({
         heightClassName="h-[25rem]"
         interactive
         model={model}
-        onZoomChange={setZoomDomain}
+        onPlotWidthChange={onPlotWidthChange}
+        onZoomChange={handleZoomChange}
         xDomain={xDomain}
       />
     </div>

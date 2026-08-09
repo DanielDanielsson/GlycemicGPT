@@ -73,7 +73,7 @@ describe("CgmSummaryStats glucose unit", () => {
     // CV% and GMI are percentages, never converted.
     expect(
       screen.getByRole("group", {
-        name: "Coefficient of variation: 20.0 percent. Stable",
+        name: "Coefficient of variation: 20.0 percent",
       }),
     ).toHaveTextContent("20.0%");
     expect(

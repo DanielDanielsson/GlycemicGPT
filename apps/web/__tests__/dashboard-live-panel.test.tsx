@@ -1,6 +1,8 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import DashboardNewDesignPage from "@/app/v2/(authenticated)/dashboard/page";
 import { hasNightscoutPumpHint } from "@/lib/pump/pump-history-context";
+import { invalidateDashboardResources } from "@/lib/query/dashboard";
 import {
   getCgmSources,
   getGlookoStatus,
@@ -8,6 +10,8 @@ import {
   listIntegrations,
   listNightscoutConnections,
 } from "@/lib/api";
+
+let mockReadingTimestamp = "2026-07-04T10:00:00.000Z";
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -33,6 +37,8 @@ jest.mock("@/components/PageTransition", () => ({
 
 jest.mock("@/components/AgpChart", () => ({
   AgpChart: () => <div data-testid="agp-chart" />,
+  V2AgpChart: () => <div data-testid="agp-chart" />,
+  V2AgpChartView: () => <div data-testid="agp-chart" />,
 }));
 
 jest.mock("@/components/CgmSummaryStats", () => ({
@@ -122,10 +128,18 @@ jest.mock("@/components/GlucoseHero", () => ({
 
 jest.mock("@/components/GlucoseTrendChart", () => ({
   GlucoseTrendChart: () => <div data-testid="glucose-trend-chart" />,
+  V2GlucoseTrendChart: () => <div data-testid="glucose-trend-chart" />,
+  GlucoseTrendChartView: () => <div data-testid="glucose-trend-chart" />,
 }));
 
 jest.mock("@/components/MergedGlucoseTrendChart", () => ({
   MergedGlucoseTrendChart: () => (
+    <div data-testid="merged-glucose-trend-chart" />
+  ),
+  V2MergedGlucoseTrendChart: () => (
+    <div data-testid="merged-glucose-trend-chart" />
+  ),
+  MergedGlucoseTrendChartView: () => (
     <div data-testid="merged-glucose-trend-chart" />
   ),
 }));
@@ -136,6 +150,7 @@ jest.mock("@/components/GlucoseUnitSeedNotice", () => ({
 
 jest.mock("@/components/InsulinSummaryStats", () => ({
   InsulinSummaryStats: () => <div data-testid="insulin-summary-stats" />,
+  V2InsulinSummaryStats: () => <div data-testid="insulin-summary-stats" />,
 }));
 
 jest.mock("@/components/LivePumpStats", () => ({
@@ -166,6 +181,16 @@ jest.mock("@/components/LivePumpStats", () => ({
 }));
 
 jest.mock("@/components/DashboardTimeRangeProvider", () => ({
+  useOptionalDashboardTimeRange: () => ({
+    currentWindow: {
+      from: "2026-07-03T10:00:00.000Z",
+      to: "2026-07-04T10:00:00.000Z",
+    },
+    label: "Last 24 hours",
+    selection: { kind: "preset", range: "24h" },
+    setSelection: jest.fn(),
+    timeZone: "UTC",
+  }),
   useDashboardTimeRange: () => ({
     currentWindow: {
       from: "2026-07-03T10:00:00.000Z",
@@ -184,7 +209,7 @@ jest.mock("@/providers/glucose-stream-provider", () => ({
       iob: { current: 1.2 },
       is_stale: true,
       minutes_ago: 5,
-      reading_timestamp: "2026-07-04T10:00:00.000Z",
+      reading_timestamp: mockReadingTimestamp,
       trend: "Stable",
       value: 120,
     },
@@ -197,7 +222,7 @@ jest.mock("@/providers/glucose-stream-provider", () => ({
 
 jest.mock("@/providers/user-provider", () => ({
   useUserContext: () => ({
-    user: { role: "diabetic" },
+    user: { id: "user-1", role: "diabetic" },
     isLoading: false,
   }),
 }));
@@ -267,6 +292,96 @@ jest.mock("@/hooks/use-forecast", () => ({
   }),
 }));
 
+jest.mock("@/hooks/dashboard-query", () => {
+  const actual = jest.requireActual("@/hooks/dashboard-query");
+  return {
+    ...actual,
+    useDashboardForecast: () => ({
+      forecast: null,
+      hasBackgroundError: false,
+      isUpdating: false,
+    }),
+    useDashboardGlucoseRange: () => ({
+      high: 180,
+      low: 70,
+      urgentHigh: 250,
+      urgentLow: 55,
+      hasBackgroundError: false,
+      isUpdating: false,
+    }),
+    useDashboardGlucoseStats: () => ({
+      error: null,
+      hasBackgroundError: false,
+      isLoading: false,
+      isUpdating: false,
+      period: "24h",
+      stats: null,
+    }),
+    useDashboardGlucoseHistory: () => ({
+      error: null,
+      hasBackgroundError: false,
+      isLoading: false,
+      isUpdating: false,
+      period: "3h",
+      readings: [],
+      refetch: jest.fn(),
+      setPeriod: jest.fn(),
+    }),
+    useDashboardBolusReview: () => ({
+      data: null,
+      error: null,
+      hasBackgroundError: false,
+      isLoading: false,
+      isUpdating: false,
+      period: "24h",
+      refetch: jest.fn(),
+      setPeriod: jest.fn(),
+    }),
+    useDashboardPumpEvents: () => ({
+      error: null,
+      events: [],
+      hasBackgroundError: false,
+      hasPumpHistory: false,
+      isLoading: false,
+      isPossiblyTruncated: false,
+      isUpdating: false,
+      refetch: jest.fn(),
+    }),
+    useDashboardPumpStatus: () => ({
+      basal: { rate: 0.8 },
+      battery: { percentage: 75 },
+      cobGrams: null,
+      hasBackgroundError: false,
+      isUpdating: false,
+      loopStatus: {
+        state: "looping",
+        source: "aaps",
+        issued_at: "2026-07-04T10:00:00.000Z",
+        failure_reason: null,
+      },
+      override: {
+        name: "Exercise",
+        started_at: "2026-07-04T09:30:00.000Z",
+        ends_at: "2026-07-04T11:00:00.000Z",
+        multiplier: 0.65,
+        target_low_mgdl: 130,
+        target_high_mgdl: 150,
+      },
+      reservoir: { units_remaining: 120 },
+    }),
+    useDashboardTimeInRangeStats: () => ({
+      error: null,
+      hasBackgroundError: false,
+      isLoading: false,
+      isUpdating: false,
+      stats: {
+        buckets: [{ label: "in_range", pct: 82 }],
+        readings_count: 12,
+      },
+    }),
+  };
+});
+
 jest.mock("@/lib/api", () => ({
   getCgmSources: jest.fn(),
   getGlookoStatus: jest.fn(),
@@ -274,6 +389,14 @@ jest.mock("@/lib/api", () => ({
   listIntegrations: jest.fn(),
   listNightscoutConnections: jest.fn(),
 }));
+
+jest.mock("@/lib/query/dashboard", () => {
+  const actual = jest.requireActual("@/lib/query/dashboard");
+  return {
+    ...actual,
+    invalidateDashboardResources: jest.fn(),
+  };
+});
 
 const mockGetCgmSources = getCgmSources as jest.MockedFunction<
   typeof getCgmSources
@@ -292,9 +415,31 @@ const mockListNightscoutConnections =
   listNightscoutConnections as jest.MockedFunction<
     typeof listNightscoutConnections
   >;
+const mockInvalidateDashboardResources =
+  invalidateDashboardResources as jest.MockedFunction<
+    typeof invalidateDashboardResources
+  >;
 
 const NOW_MS = new Date("2026-07-04T10:05:06.000Z").getTime();
 const DEXCOM_LAST_SYNC_AT = "2026-07-04T10:00:00.000Z";
+
+function renderDashboard() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+    },
+  });
+  const createElement = () => (
+    <QueryClientProvider client={queryClient}>
+      <DashboardNewDesignPage />
+    </QueryClientProvider>
+  );
+  const result = render(createElement());
+  return {
+    ...result,
+    rerenderDashboard: () => result.rerender(createElement()),
+  };
+}
 
 async function settleConnectionStatusRequests() {
   await act(async () => {
@@ -309,6 +454,18 @@ async function settleConnectionStatusRequests() {
 describe("Dashboard live data panel", () => {
   beforeEach(() => {
     jest.spyOn(Date, "now").mockReturnValue(NOW_MS);
+    mockReadingTimestamp = "2026-07-04T10:00:00.000Z";
+    mockInvalidateDashboardResources.mockResolvedValue(undefined);
+    window.matchMedia = jest.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    }));
     mockGetCgmSources.mockResolvedValue({
       multiple_sources: false,
       primary_source: null,
@@ -334,7 +491,7 @@ describe("Dashboard live data panel", () => {
   });
 
   it("renders the split live CGM, pump stats, and connections panels", async () => {
-    render(<DashboardNewDesignPage />);
+    renderDashboard();
 
     const liveCgmPanel = screen.getByRole("region", { name: "Live CGM" });
     const livePumpStatsPanel = screen.getByRole("region", {
@@ -423,23 +580,21 @@ describe("Dashboard live data panel", () => {
     await settleConnectionStatusRequests();
   });
 
-  it("shows the merged chart on mobile and the standard chart on desktop", async () => {
-    render(<DashboardNewDesignPage />);
+  it("mounts only the mobile chart presentation", async () => {
+    renderDashboard();
 
     const mergedGlucoseTrendPanel = screen.getByRole("region", {
       name: "Merged Glucose Trend",
     });
-    const glucoseTrendPanel = screen.getByRole("region", {
-      name: "Glucose Trend",
-    });
-
-    expect(mergedGlucoseTrendPanel.parentElement).toHaveClass("lg:hidden");
-    expect(glucoseTrendPanel.parentElement).toHaveClass("hidden", "lg:block");
+    expect(mergedGlucoseTrendPanel).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Glucose Trend" }),
+    ).not.toBeInTheDocument();
     await settleConnectionStatusRequests();
   });
 
   it("places CGM summary before insulin summary and above AGP", async () => {
-    render(<DashboardNewDesignPage />);
+    renderDashboard();
 
     const cgmSummary = screen.getByTestId("cgm-summary-stats");
     const insulinSummary = screen.getByTestId("insulin-summary-stats");
@@ -457,7 +612,7 @@ describe("Dashboard live data panel", () => {
   });
 
   it("keeps the sticky time range toolbar after all live panels", async () => {
-    render(<DashboardNewDesignPage />);
+    renderDashboard();
 
     const liveConnectionsPanel = screen.getByRole("region", {
       name: /Connections/i,
@@ -477,7 +632,7 @@ describe("Dashboard live data panel", () => {
     expect(toolbarRegion).not.toHaveClass("order-first");
     expect(
       within(toolbarRegion).getByTestId("dashboard-time-range-quick-select"),
-    ).toHaveAttribute("data-ranges", "3h,24h,3d,7d");
+    ).toHaveAttribute("data-ranges", "3h,6h,12h,24h");
     expect(
       within(toolbarRegion).queryByText("Create report"),
     ).not.toBeInTheDocument();
@@ -486,7 +641,7 @@ describe("Dashboard live data panel", () => {
     ).not.toBeInTheDocument();
     expect(
       within(toolbarRegion).getByTestId("dashboard-time-range-picker"),
-    ).toHaveAttribute("data-max-range-days", "31");
+    ).toHaveAttribute("data-max-range-days", "90");
     await settleConnectionStatusRequests();
   });
 
@@ -506,7 +661,7 @@ describe("Dashboard live data panel", () => {
     });
     mockListNightscoutConnections.mockResolvedValue({ connections: [] });
 
-    render(<DashboardNewDesignPage />);
+    renderDashboard();
 
     await waitFor(() => {
       expect(screen.getByTestId("freshness-card")).toHaveAttribute(
@@ -531,6 +686,24 @@ describe("Dashboard live data panel", () => {
       "data-is-stale",
       "true",
     );
+  });
+
+  it("does not invalidate initial chart requests for the first SSE reading", async () => {
+    const view = renderDashboard();
+
+    expect(mockInvalidateDashboardResources).not.toHaveBeenCalled();
+
+    mockReadingTimestamp = "2026-07-04T10:01:00.000Z";
+    view.rerenderDashboard();
+    expect(mockInvalidateDashboardResources).not.toHaveBeenCalled();
+
+    jest.spyOn(Date, "now").mockReturnValue(NOW_MS + 5 * 60 * 1000 + 1);
+    mockReadingTimestamp = "2026-07-04T10:06:00.000Z";
+    view.rerenderDashboard();
+
+    await waitFor(() => {
+      expect(mockInvalidateDashboardResources).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("loads xDrip, Glooko, and Medtronic for Live Connections", async () => {
@@ -561,7 +734,7 @@ describe("Dashboard live data panel", () => {
       status: "connected",
     });
 
-    render(<DashboardNewDesignPage />);
+    renderDashboard();
 
     await waitFor(() => {
       expect(screen.getByTestId("freshness-card")).toHaveAttribute(

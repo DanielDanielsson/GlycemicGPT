@@ -25,6 +25,8 @@ from src.services.cgm_source import glucose_readings_query
 
 logger = get_logger(__name__)
 
+DEXCOM_CREDENTIAL_DECRYPTION_ERROR = "Credential decryption failed"
+
 
 class DexcomSyncError(Exception):
     """Base exception for Dexcom sync errors."""
@@ -118,7 +120,7 @@ async def sync_dexcom_for_user(
             error=str(e),
         )
         credential.status = IntegrationStatus.ERROR
-        credential.last_error = "Credential decryption failed"
+        credential.last_error = DEXCOM_CREDENTIAL_DECRYPTION_ERROR
         await db.commit()
         raise DexcomSyncError("Failed to decrypt credentials") from e
 

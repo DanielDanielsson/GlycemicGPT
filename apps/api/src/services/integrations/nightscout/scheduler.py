@@ -38,8 +38,9 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
+from src.core.encryption import decrypt_optional_credential
 from src.database import get_session_maker
 from src.logging_config import get_logger
 from src.models.nightscout_connection import (
@@ -49,6 +50,7 @@ from src.models.nightscout_connection import (
     NightscoutSyncStatus,
 )
 from src.services.integrations.nightscout.sync import (
+    NIGHTSCOUT_CREDENTIAL_DECRYPTION_ERROR,
     sync_nightscout_for_connection,
 )
 
@@ -99,10 +101,11 @@ async def run_nightscout_sync_all_users() -> None:
     """
     started = datetime.now(UTC)
 
-    # Discover phase -- single short-lived session, slim SELECT.
-    # Pulling the encrypted_credential blob for every active connection
-    # would waste bandwidth at 1000s of rows; the refetch inside
-    # `_sync_one` will hydrate the full row only for due connections.
+    # Discover phase. Credential blobs are selected so rotated or missing
+    # encryption keys can be classified in one short transaction before
+    # starting per-connection work. Without this preflight, a large invalid
+    # batch consumes every scheduler slot and performs one failed transaction
+    # per row, which can starve normal API requests for an entire tick.
     session_maker = get_session_maker()
     async with session_maker() as session:
         result = await session.execute(
@@ -111,6 +114,7 @@ async def run_nightscout_sync_all_users() -> None:
                 NightscoutConnection.user_id,
                 NightscoutConnection.sync_interval_minutes,
                 NightscoutConnection.last_synced_at,
+                NightscoutConnection.encrypted_credential,
             ).where(
                 NightscoutConnection.is_active.is_(True),
                 NightscoutConnection.last_sync_status.notin_(list(_PAUSED_STATUSES)),
@@ -118,11 +122,33 @@ async def run_nightscout_sync_all_users() -> None:
         )
         rows = result.all()
 
-    due_ids: list[tuple[uuid.UUID, uuid.UUID]] = []
-    for row in rows:
-        interval = _clamped_interval(row.sync_interval_minutes)
-        if _is_due(row.last_synced_at, interval, now=started):
-            due_ids.append((row.id, row.user_id))
+        due_ids: list[tuple[uuid.UUID, uuid.UUID]] = []
+        undecryptable_ids: list[uuid.UUID] = []
+        for row in rows:
+            interval = _clamped_interval(row.sync_interval_minutes)
+            if not _is_due(row.last_synced_at, interval, now=started):
+                continue
+            try:
+                decrypt_optional_credential(row.encrypted_credential)
+            except ValueError:
+                undecryptable_ids.append(row.id)
+            else:
+                due_ids.append((row.id, row.user_id))
+
+        if undecryptable_ids:
+            await session.execute(
+                update(NightscoutConnection)
+                .where(NightscoutConnection.id.in_(undecryptable_ids))
+                .values(
+                    last_sync_status=NightscoutSyncStatus.AUTH_FAILED,
+                    last_sync_error=NIGHTSCOUT_CREDENTIAL_DECRYPTION_ERROR,
+                )
+            )
+            await session.commit()
+            logger.warning(
+                "nightscout_scheduler_paused_undecryptable_credentials",
+                count=len(undecryptable_ids),
+            )
 
     if not due_ids:
         logger.debug("nightscout_scheduler_tick_no_due_connections")

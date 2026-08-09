@@ -3,7 +3,9 @@
 }
 
 @utility font_jetbrains_mono {
-  font-family: var(--font-jetbrains-mono), ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family:
+    var(--font-jetbrains-mono), ui-monospace, "SFMono-Regular", Consolas,
+    monospace;
 }
 
 @utility font_header_1 {
@@ -147,6 +149,14 @@
     font-size: 0.875rem;
     line-height: 1.375rem;
   }
+}
+
+@utility font_ui_micro {
+  font-family: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1rem;
 }
 
 @utility font_regular {
