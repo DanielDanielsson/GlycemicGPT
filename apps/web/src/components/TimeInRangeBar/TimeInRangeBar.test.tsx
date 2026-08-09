@@ -10,7 +10,6 @@ import {
   TimeInRangeBar,
   normalizeBuckets,
   formatPercentage,
-  getQualityAssessment,
   PERIOD_LABELS,
 } from "@/components/TimeInRangeBar";
 import TimeInRangeBarDefault from "./TimeInRangeBar";
@@ -56,11 +55,41 @@ function makeBuckets(overrides?: Partial<Record<string, number>>): TirBucket[] {
     ...overrides,
   };
   return [
-    { label: "urgent_low", pct: defaults.urgent_low, readings: 5, threshold_low: null, threshold_high: 55 },
-    { label: "low", pct: defaults.low, readings: 20, threshold_low: 55, threshold_high: 70 },
-    { label: "in_range", pct: defaults.in_range, readings: 175, threshold_low: 70, threshold_high: 180 },
-    { label: "high", pct: defaults.high, readings: 38, threshold_low: 180, threshold_high: 250 },
-    { label: "urgent_high", pct: defaults.urgent_high, readings: 12, threshold_low: 250, threshold_high: null },
+    {
+      label: "urgent_low",
+      pct: defaults.urgent_low,
+      readings: 5,
+      threshold_low: null,
+      threshold_high: 55,
+    },
+    {
+      label: "low",
+      pct: defaults.low,
+      readings: 20,
+      threshold_low: 55,
+      threshold_high: 70,
+    },
+    {
+      label: "in_range",
+      pct: defaults.in_range,
+      readings: 175,
+      threshold_low: 70,
+      threshold_high: 180,
+    },
+    {
+      label: "high",
+      pct: defaults.high,
+      readings: 38,
+      threshold_low: 180,
+      threshold_high: 250,
+    },
+    {
+      label: "urgent_high",
+      pct: defaults.urgent_high,
+      readings: 12,
+      threshold_low: 250,
+      threshold_high: null,
+    },
   ];
 }
 
@@ -87,34 +116,64 @@ describe("normalizeBuckets", () => {
   });
 
   it("normalizes buckets that sum to more than 100", () => {
-    const buckets = makeBuckets({ urgent_low: 10, low: 20, in_range: 80, high: 20, urgent_high: 10 });
+    const buckets = makeBuckets({
+      urgent_low: 10,
+      low: 20,
+      in_range: 80,
+      high: 20,
+      urgent_high: 10,
+    });
     const result = normalizeBuckets(buckets);
     const total = result.reduce((s, b) => s + b.pct, 0);
     expect(total).toBeCloseTo(100, 1);
   });
 
   it("normalizes buckets that sum to less than 100", () => {
-    const buckets = makeBuckets({ urgent_low: 1, low: 3, in_range: 30, high: 5, urgent_high: 1 });
+    const buckets = makeBuckets({
+      urgent_low: 1,
+      low: 3,
+      in_range: 30,
+      high: 5,
+      urgent_high: 1,
+    });
     const result = normalizeBuckets(buckets);
     const total = result.reduce((s, b) => s + b.pct, 0);
     expect(total).toBeCloseTo(100, 1);
   });
 
   it("returns all zeros for all-zero data", () => {
-    const buckets = makeBuckets({ urgent_low: 0, low: 0, in_range: 0, high: 0, urgent_high: 0 });
+    const buckets = makeBuckets({
+      urgent_low: 0,
+      low: 0,
+      in_range: 0,
+      high: 0,
+      urgent_high: 0,
+    });
     const result = normalizeBuckets(buckets);
     result.forEach((b) => expect(b.pct).toBe(0));
   });
 
   it("handles near-100 floating point totals unchanged", () => {
-    const buckets = makeBuckets({ urgent_low: 2.001, low: 7.999, in_range: 70.002, high: 14.999, urgent_high: 4.999 });
+    const buckets = makeBuckets({
+      urgent_low: 2.001,
+      low: 7.999,
+      in_range: 70.002,
+      high: 14.999,
+      urgent_high: 4.999,
+    });
     const result = normalizeBuckets(buckets);
     // Within 0.01 of 100 -- should return unchanged
     expect(result[0].pct).toBe(2.001);
   });
 
   it("ensures in_range is never negative", () => {
-    const buckets = makeBuckets({ urgent_low: 25.3, low: 25.3, in_range: 0, high: 25.3, urgent_high: 25.3 });
+    const buckets = makeBuckets({
+      urgent_low: 25.3,
+      low: 25.3,
+      in_range: 0,
+      high: 25.3,
+      urgent_high: 25.3,
+    });
     const result = normalizeBuckets(buckets);
     const inRange = result.find((b) => b.label === "in_range");
     expect(inRange!.pct).toBeGreaterThanOrEqual(0);
@@ -154,41 +213,6 @@ describe("formatPercentage", () => {
   });
 });
 
-describe("getQualityAssessment", () => {
-  it("returns Excellent for 70% or higher", () => {
-    expect(getQualityAssessment(70)).toEqual({
-      label: "Excellent",
-      colorClass: "text-signal-check-text",
-    });
-    expect(getQualityAssessment(85)).toEqual({
-      label: "Excellent",
-      colorClass: "text-signal-check-text",
-    });
-  });
-
-  it("returns Good for 50-69%", () => {
-    expect(getQualityAssessment(50)).toEqual({
-      label: "Good",
-      colorClass: "text-signal-warning-text",
-    });
-    expect(getQualityAssessment(69)).toEqual({
-      label: "Good",
-      colorClass: "text-signal-warning-text",
-    });
-  });
-
-  it("returns Needs Improvement for below 50%", () => {
-    expect(getQualityAssessment(49)).toEqual({
-      label: "Needs Improvement",
-      colorClass: "text-signal-error-text",
-    });
-    expect(getQualityAssessment(0)).toEqual({
-      label: "Needs Improvement",
-      colorClass: "text-signal-error-text",
-    });
-  });
-});
-
 describe("TimeInRangeBar component", () => {
   const baseProps = {
     buckets: defaultBuckets,
@@ -219,21 +243,11 @@ describe("TimeInRangeBar component", () => {
       expect(screen.getByTestId("period-label")).toHaveTextContent("7 Days");
     });
 
-    it("displays quality assessment", () => {
+    it("does not add evaluative quality labels", () => {
       render(<TimeInRangeBar {...baseProps} />);
-      expect(screen.getByText("Excellent")).toBeInTheDocument();
-    });
-
-    it("displays correct quality for Good range", () => {
-      const buckets = makeBuckets({ in_range: 55, high: 30, urgent_high: 7 });
-      render(<TimeInRangeBar {...baseProps} buckets={buckets} />);
-      expect(screen.getByText("Good")).toBeInTheDocument();
-    });
-
-    it("displays correct quality for Needs Improvement range", () => {
-      const buckets = makeBuckets({ in_range: 40, high: 40, urgent_high: 12 });
-      render(<TimeInRangeBar {...baseProps} buckets={buckets} />);
-      expect(screen.getByText("Needs Improvement")).toBeInTheDocument();
+      expect(screen.queryByText("Excellent")).not.toBeInTheDocument();
+      expect(screen.queryByText("Good")).not.toBeInTheDocument();
+      expect(screen.queryByText("Needs Improvement")).not.toBeInTheDocument();
     });
 
     it("displays target range info", () => {
@@ -250,7 +264,9 @@ describe("TimeInRangeBar component", () => {
       // The parent dashboard converts the target before passing it down; the
       // bar renders whatever unit string it receives.
       render(<TimeInRangeBar {...baseProps} targetRange="3.9-10.0 mmol/L" />);
-      expect(screen.getByText(/Target: 3\.9-10\.0 mmol\/L/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Target: 3\.9-10\.0 mmol\/L/),
+      ).toBeInTheDocument();
     });
   });
 
@@ -291,7 +307,7 @@ describe("TimeInRangeBar component", () => {
           {...baseProps}
           previousBuckets={prevBuckets}
           previousReadingsCount={200}
-        />
+        />,
       );
       expect(
         screen.getByRole("img", { name: /^Time in range for 24 Hours:/ }),
@@ -317,7 +333,7 @@ describe("TimeInRangeBar component", () => {
           {...baseProps}
           previousBuckets={prevBuckets}
           previousReadingsCount={200}
-        />
+        />,
       );
       expect(screen.getByText(/prev: 200/)).toBeInTheDocument();
     });
@@ -332,10 +348,11 @@ describe("TimeInRangeBar component", () => {
           {...baseProps}
           previousBuckets={prevBuckets}
           previousReadingsCount={200}
-        />
+        />,
       );
       const delta = screen.getByTestId("delta-indicator");
-      expect(delta).toHaveTextContent("+5%");
+      expect(delta).toHaveTextContent("Previous period: +5.0%");
+      expect(delta).toHaveClass("text-foreground-secondary");
     });
 
     it("shows negative delta when in-range decreased", () => {
@@ -346,10 +363,11 @@ describe("TimeInRangeBar component", () => {
           {...baseProps}
           previousBuckets={prevBuckets}
           previousReadingsCount={200}
-        />
+        />,
       );
       const delta = screen.getByTestId("delta-indicator");
-      expect(delta).toHaveTextContent("-10%");
+      expect(delta).toHaveTextContent("Previous period: -10.0%");
+      expect(delta).toHaveClass("text-foreground-secondary");
     });
 
     it("does not show delta when previous period is null", () => {
@@ -357,26 +375,25 @@ describe("TimeInRangeBar component", () => {
       expect(screen.queryByTestId("delta-indicator")).not.toBeInTheDocument();
     });
 
-    it("does not show delta when delta is zero", () => {
+    it("shows a factual zero delta", () => {
       const prevBuckets = makeBuckets({ in_range: 70 });
       render(
         <TimeInRangeBar
           {...baseProps}
           previousBuckets={prevBuckets}
           previousReadingsCount={200}
-        />
+        />,
       );
-      expect(screen.queryByTestId("delta-indicator")).not.toBeInTheDocument();
+      expect(screen.getByTestId("delta-indicator")).toHaveTextContent(
+        "Previous period: 0.0%",
+      );
     });
   });
 
   describe("error state", () => {
     it("shows error message with role=alert", () => {
       render(
-        <TimeInRangeBar
-          {...baseProps}
-          error="Failed to load TIR detail"
-        />
+        <TimeInRangeBar {...baseProps} error="Failed to load TIR detail" />,
       );
       const errorMsg = screen.getByTestId("error-message");
       expect(errorMsg).toHaveTextContent("Failed to load TIR detail");
@@ -384,12 +401,7 @@ describe("TimeInRangeBar component", () => {
     });
 
     it("does not show bar or legend in error state", () => {
-      render(
-        <TimeInRangeBar
-          {...baseProps}
-          error="Some error"
-        />
-      );
+      render(<TimeInRangeBar {...baseProps} error="Some error" />);
       expect(screen.queryByRole("img")).not.toBeInTheDocument();
       expect(screen.queryByTestId("range-legend")).not.toBeInTheDocument();
     });
@@ -404,7 +416,7 @@ describe("TimeInRangeBar component", () => {
           previousBuckets={null}
           previousReadingsCount={null}
           error={null}
-        />
+        />,
       );
       expect(screen.getByTestId("no-data-message")).toBeInTheDocument();
       expect(screen.getByText(/No glucose data/)).toBeInTheDocument();
@@ -418,7 +430,7 @@ describe("TimeInRangeBar component", () => {
           previousBuckets={null}
           previousReadingsCount={null}
           error={null}
-        />
+        />,
       );
       expect(screen.getByTestId("no-data-message")).toBeInTheDocument();
     });
@@ -431,7 +443,7 @@ describe("TimeInRangeBar component", () => {
           previousBuckets={null}
           previousReadingsCount={null}
           error={null}
-        />
+        />,
       );
 
       expect(screen.getByTestId("no-data-message")).toBeInTheDocument();
@@ -470,15 +482,15 @@ describe("TimeInRangeBar component", () => {
       const bar = screen.getByRole("img");
       expect(bar).toHaveAttribute(
         "aria-label",
-        expect.stringContaining("Time in range for 24 Hours")
+        expect.stringContaining("Time in range for 24 Hours"),
       );
       expect(bar).toHaveAttribute(
         "aria-label",
-        expect.stringContaining("Urgent Low")
+        expect.stringContaining("Urgent Low"),
       );
       expect(bar).toHaveAttribute(
         "aria-label",
-        expect.stringContaining("In Range")
+        expect.stringContaining("In Range"),
       );
     });
 
@@ -487,7 +499,7 @@ describe("TimeInRangeBar component", () => {
       const bar = screen.getByRole("img");
       expect(bar).toHaveAttribute(
         "aria-label",
-        expect.stringContaining("Target: 70-180 mg/dL")
+        expect.stringContaining("Target: 70-180 mg/dL"),
       );
     });
   });
@@ -495,11 +507,41 @@ describe("TimeInRangeBar component", () => {
   describe("data handling", () => {
     it("sanitizes NaN values without crashing", () => {
       const badBuckets: TirBucket[] = [
-        { label: "urgent_low", pct: NaN, readings: 0, threshold_low: null, threshold_high: 55 },
-        { label: "low", pct: Infinity, readings: 0, threshold_low: 55, threshold_high: 70 },
-        { label: "in_range", pct: -5, readings: 0, threshold_low: 70, threshold_high: 180 },
-        { label: "high", pct: 200, readings: 0, threshold_low: 180, threshold_high: 250 },
-        { label: "urgent_high", pct: 0, readings: 0, threshold_low: 250, threshold_high: null },
+        {
+          label: "urgent_low",
+          pct: NaN,
+          readings: 0,
+          threshold_low: null,
+          threshold_high: 55,
+        },
+        {
+          label: "low",
+          pct: Infinity,
+          readings: 0,
+          threshold_low: 55,
+          threshold_high: 70,
+        },
+        {
+          label: "in_range",
+          pct: -5,
+          readings: 0,
+          threshold_low: 70,
+          threshold_high: 180,
+        },
+        {
+          label: "high",
+          pct: 200,
+          readings: 0,
+          threshold_low: 180,
+          threshold_high: 250,
+        },
+        {
+          label: "urgent_high",
+          pct: 0,
+          readings: 0,
+          threshold_low: 250,
+          threshold_high: null,
+        },
       ];
       render(
         <TimeInRangeBar
@@ -508,16 +550,34 @@ describe("TimeInRangeBar component", () => {
           previousBuckets={null}
           previousReadingsCount={null}
           error={null}
-        />
+        />,
       );
       expect(screen.getByTestId("time-in-range-bar")).toBeInTheDocument();
     });
 
     it("handles fewer than 5 buckets gracefully", () => {
       const partialBuckets: TirBucket[] = [
-        { label: "low", pct: 20, readings: 50, threshold_low: 55, threshold_high: 70 },
-        { label: "in_range", pct: 60, readings: 150, threshold_low: 70, threshold_high: 180 },
-        { label: "high", pct: 20, readings: 50, threshold_low: 180, threshold_high: 250 },
+        {
+          label: "low",
+          pct: 20,
+          readings: 50,
+          threshold_low: 55,
+          threshold_high: 70,
+        },
+        {
+          label: "in_range",
+          pct: 60,
+          readings: 150,
+          threshold_low: 70,
+          threshold_high: 180,
+        },
+        {
+          label: "high",
+          pct: 20,
+          readings: 50,
+          threshold_low: 180,
+          threshold_high: 250,
+        },
       ];
       render(
         <TimeInRangeBar
@@ -526,7 +586,7 @@ describe("TimeInRangeBar component", () => {
           previousBuckets={null}
           previousReadingsCount={null}
           error={null}
-        />
+        />,
       );
       expect(screen.getByTestId("time-in-range-bar")).toBeInTheDocument();
       const bar = screen.getByRole("img");
@@ -536,11 +596,41 @@ describe("TimeInRangeBar component", () => {
 
     it("handles buckets in non-canonical order", () => {
       const shuffledBuckets: TirBucket[] = [
-        { label: "high", pct: 15, readings: 38, threshold_low: 180, threshold_high: 250 },
-        { label: "urgent_low", pct: 2, readings: 5, threshold_low: null, threshold_high: 55 },
-        { label: "in_range", pct: 70, readings: 175, threshold_low: 70, threshold_high: 180 },
-        { label: "urgent_high", pct: 5, readings: 12, threshold_low: 250, threshold_high: null },
-        { label: "low", pct: 8, readings: 20, threshold_low: 55, threshold_high: 70 },
+        {
+          label: "high",
+          pct: 15,
+          readings: 38,
+          threshold_low: 180,
+          threshold_high: 250,
+        },
+        {
+          label: "urgent_low",
+          pct: 2,
+          readings: 5,
+          threshold_low: null,
+          threshold_high: 55,
+        },
+        {
+          label: "in_range",
+          pct: 70,
+          readings: 175,
+          threshold_low: 70,
+          threshold_high: 180,
+        },
+        {
+          label: "urgent_high",
+          pct: 5,
+          readings: 12,
+          threshold_low: 250,
+          threshold_high: null,
+        },
+        {
+          label: "low",
+          pct: 8,
+          readings: 20,
+          threshold_low: 55,
+          threshold_high: 70,
+        },
       ];
       render(
         <TimeInRangeBar
@@ -549,7 +639,7 @@ describe("TimeInRangeBar component", () => {
           previousBuckets={null}
           previousReadingsCount={null}
           error={null}
-        />
+        />,
       );
       expect(screen.getByTestId("time-in-range-bar")).toBeInTheDocument();
       // Should still render all 5 segments
@@ -562,7 +652,9 @@ describe("TimeInRangeBar component", () => {
   describe("styling", () => {
     it("applies custom className", () => {
       render(<TimeInRangeBar {...baseProps} className="custom-test-class" />);
-      expect(screen.getByTestId("time-in-range-bar")).toHaveClass("custom-test-class");
+      expect(screen.getByTestId("time-in-range-bar")).toHaveClass(
+        "custom-test-class",
+      );
     });
 
     it("has correct base styling classes", () => {
@@ -605,7 +697,7 @@ describe("TimeInRangeBar component", () => {
       render(<TimeInRangeBar {...baseProps} isLoading={true} />);
       expect(screen.getByRole("region")).toHaveAttribute(
         "aria-label",
-        "Loading time in range data"
+        "Loading time in range data",
       );
     });
   });
@@ -627,7 +719,11 @@ describe("TimeInRangeBar component", () => {
     it("calls onPeriodChange when a period button is clicked", () => {
       const onChange = jest.fn();
       render(
-        <TimeInRangeBar {...baseProps} period="24h" onPeriodChange={onChange} />
+        <TimeInRangeBar
+          {...baseProps}
+          period="24h"
+          onPeriodChange={onChange}
+        />,
       );
       fireEvent.click(screen.getByRole("radio", { name: "7 Days" }));
       expect(onChange).toHaveBeenCalledWith("7d");
@@ -636,15 +732,15 @@ describe("TimeInRangeBar component", () => {
     it("marks the current period as checked", () => {
       const onChange = jest.fn();
       render(
-        <TimeInRangeBar {...baseProps} period="7d" onPeriodChange={onChange} />
+        <TimeInRangeBar {...baseProps} period="7d" onPeriodChange={onChange} />,
       );
       expect(screen.getByRole("radio", { name: "7 Days" })).toHaveAttribute(
         "aria-checked",
-        "true"
+        "true",
       );
       expect(screen.getByRole("radio", { name: "24 Hours" })).toHaveAttribute(
         "aria-checked",
-        "false"
+        "false",
       );
       expect(screen.getByRole("radio", { name: "7 Days" })).toHaveAttribute(
         "tabindex",

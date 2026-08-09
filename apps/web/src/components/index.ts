@@ -132,7 +132,6 @@ export {
   type TimePeriod,
   normalizeBuckets,
   formatPercentage,
-  getQualityAssessment,
   PERIOD_LABELS,
 } from "./TimeInRangeBar";
 export {

@@ -3,10 +3,7 @@
 import type { TirBucket } from "@/lib/api";
 import { twMerge } from "@/lib/ui/twMerge";
 import { Panel } from "@/components/Panel";
-import {
-  formatPercentage,
-  getQualityAssessment,
-} from "@/components/TimeInRangeBar";
+import { formatPercentage } from "@/components/TimeInRangeBar";
 import type {
   TimeInRangePanelContentProps,
   TimeInRangePanelProps,
@@ -140,7 +137,9 @@ function TimeInRangeRing({
           </text>
         </svg>
       </div>
-      <p className="font_metric_caption text-foreground-primary">{displayLabel}</p>
+      <p className="font_metric_caption text-foreground-primary">
+        {displayLabel}
+      </p>
       <p className="font_metric_caption text-foreground-secondary">
         {readings} readings
       </p>
@@ -168,9 +167,7 @@ function TimeInRangeSkeleton() {
               )}
             />
           </div>
-          <div
-            className="h-3 w-full max-w-16 animate-pulse rounded-panel bg-surface-tertiary"
-          />
+          <div className="h-3 w-full max-w-16 animate-pulse rounded-panel bg-surface-tertiary" />
         </div>
       ))}
     </div>
@@ -216,12 +213,13 @@ export function TimeInRangePanelContent({
   const hasData = (buckets?.length ?? 0) > 0 && readingsCount > 0;
   const inRangePct = hasData ? getInRangePct(buckets) : 0;
   const previousInRangePct =
-    (previousBuckets?.length ?? 0) > 0
+    (previousBuckets?.length ?? 0) > 0 && (previousReadingsCount ?? 0) > 0
       ? getInRangePct(previousBuckets)
       : null;
   const delta =
-    previousInRangePct !== null ? Math.round(inRangePct - previousInRangePct) : null;
-  const quality = getQualityAssessment(inRangePct);
+    previousInRangePct !== null
+      ? Number((inRangePct - previousInRangePct).toFixed(1))
+      : null;
   const readingsSummary = `${readingsCount.toLocaleString()} readings${
     previousReadingsCount != null
       ? ` compared with ${previousReadingsCount.toLocaleString()} previous`
@@ -253,20 +251,13 @@ export function TimeInRangePanelContent({
             <p className="font_metric_caption text-foreground-secondary">
               {readingsSummary}
             </p>
-            <span aria-hidden="true" className="text-foreground-secondary">·</span>
-            <span className={twMerge("font_body_3", quality.colorClass)}>
-              {quality.label}
-            </span>
-            {delta !== null && delta !== 0 ? (
+            {delta !== null ? (
               <span
-                className={twMerge(
-                  "font_metric_caption",
-                  delta > 0 ? "text-signal-check-text" : "text-signal-error-text",
-                )}
+                className="font_metric_caption text-foreground-secondary"
                 data-testid="time-in-range-delta"
               >
-                {delta > 0 ? "+" : ""}
-                {delta}%
+                Previous period: {delta > 0 ? "+" : ""}
+                {delta.toFixed(1)}%
               </span>
             ) : null}
           </div>

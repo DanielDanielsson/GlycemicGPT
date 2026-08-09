@@ -105,21 +105,6 @@ export function formatPercentage(value: number): string {
   if (value >= 99.5 && value < 100) return ">99%";
   return `${Math.round(value)}%`;
 }
-/**
- * Get quality assessment based on time in range.
- */
-export function getQualityAssessment(inRangePercent: number): {
-  label: string;
-  colorClass: string;
-} {
-  if (inRangePercent >= 70) {
-    return { label: "Excellent", colorClass: "text-signal-check-text" };
-  }
-  if (inRangePercent >= 50) {
-    return { label: "Good", colorClass: "text-signal-warning-text" };
-  }
-  return { label: "Needs Improvement", colorClass: "text-signal-error-text" };
-}
 export function TimeInRangeBar({
   buckets,
   readingsCount,
@@ -154,7 +139,10 @@ export function TimeInRangeBar({
         <div className="h-8 bg-surface-tertiary rounded-pill" />
         <div className="flex justify-center gap-4 mt-3">
           {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="h-4 w-16 bg-surface-tertiary rounded-panel" />
+            <div
+              key={i}
+              className="h-4 w-16 bg-surface-tertiary rounded-panel"
+            />
           ))}
         </div>
       </div>
@@ -224,13 +212,13 @@ export function TimeInRangeBar({
   const ordered = orderBuckets(safeBuckets);
   const orderedPrev = safePrevBuckets ? orderBuckets(safePrevBuckets) : null;
   const inRangePct = ordered.find((b) => b.label === "in_range")?.pct ?? 0;
-  const quality = getQualityAssessment(inRangePct);
-  // Delta vs previous period (sub-1% changes intentionally hidden via rounding)
   const prevInRangePct = safePrevBuckets?.find(
     (b) => b.label === "in_range",
   )?.pct;
   const delta =
-    prevInRangePct != null ? Math.round(inRangePct - prevInRangePct) : null;
+    prevInRangePct != null
+      ? Number((inRangePct - prevInRangePct).toFixed(1))
+      : null;
   const periodLabel = periodLabelOverride ?? PERIOD_LABELS[period];
   // Build aria description
   const ariaDescription = `Time in range for ${periodLabel}: ${ordered
@@ -328,19 +316,13 @@ export function TimeInRangeBar({
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <h2 className="font_header_4">Time in Range</h2>
-          <span className={twMerge("font_body_3", quality.colorClass)}>
-            {quality.label}
-          </span>
-          {delta !== null && delta !== 0 && (
+          {delta !== null && (
             <span
-              className={twMerge(
-                "font_body_3",
-                delta > 0 ? "text-signal-check-text" : "text-signal-error-text",
-              )}
+              className="font_metric_caption text-foreground-secondary"
               data-testid="delta-indicator"
             >
-              {delta > 0 ? "+" : ""}
-              {delta}%
+              Previous period: {delta > 0 ? "+" : ""}
+              {delta.toFixed(1)}%
             </span>
           )}
         </div>
@@ -419,11 +401,13 @@ function PeriodSelector({
     event.preventDefault();
     const currentIndex = PERIOD_OPTIONS.indexOf(currentPeriod);
     const nextIndex =
-      (currentIndex + direction + PERIOD_OPTIONS.length) % PERIOD_OPTIONS.length;
+      (currentIndex + direction + PERIOD_OPTIONS.length) %
+      PERIOD_OPTIONS.length;
     const nextPeriod = PERIOD_OPTIONS[nextIndex];
-    const radios = event.currentTarget.parentElement?.querySelectorAll<HTMLElement>(
-      '[role="radio"]',
-    );
+    const radios =
+      event.currentTarget.parentElement?.querySelectorAll<HTMLElement>(
+        '[role="radio"]',
+      );
 
     onPeriodChange(nextPeriod);
     radios?.[nextIndex]?.focus();

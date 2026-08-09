@@ -92,14 +92,18 @@ describe("Dashboard CgmSummaryStats", () => {
     expect(within(average).getByText("154")).toBeInTheDocument();
 
     expect(
-      within(glucoseGroup).getByRole("group", { name: "Minimum glucose: 69 mg/dL" }),
+      within(glucoseGroup).getByRole("group", {
+        name: "Minimum glucose: 69 mg/dL",
+      }),
     ).toHaveTextContent(/Min Glucose\s*69\s*mg\/dL/);
     expect(
-      within(glucoseGroup).getByRole("group", { name: "Maximum glucose: 241 mg/dL" }),
+      within(glucoseGroup).getByRole("group", {
+        name: "Maximum glucose: 241 mg/dL",
+      }),
     ).toHaveTextContent(/Max Glucose\s*241\s*mg\/dL/);
   });
 
-  it("keeps target context visible for clinical status values", () => {
+  it("renders factual CV and active time without evaluative labels", () => {
     render(
       <CgmSummaryStats
         stats={stats}
@@ -110,16 +114,22 @@ describe("Dashboard CgmSummaryStats", () => {
     );
 
     const cv = screen.getByRole("group", {
-      name: "Coefficient of variation: 24.7 percent. Stable",
+      name: "Coefficient of variation: 24.7 percent",
     });
-    expect(within(cv).getByText("Target <36%")).toBeInTheDocument();
-    expect(within(cv).getByText("Stable")).toBeInTheDocument();
+    expect(cv).toHaveTextContent("24.7%");
+    expect(within(cv).queryByText("Target <36%")).not.toBeInTheDocument();
+    expect(within(cv).queryByText("Stable")).not.toBeInTheDocument();
 
     const cgmActive = screen.getByRole("group", {
-      name: "CGM active time: 92 percent. Good coverage",
+      name: "CGM active time: 92 percent",
     });
-    expect(within(cgmActive).getByText("Target >70%")).toBeInTheDocument();
-    expect(within(cgmActive).getByText("Good coverage")).toBeInTheDocument();
+    expect(cgmActive).toHaveTextContent("92%");
+    expect(
+      within(cgmActive).queryByText("Target >70%"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(cgmActive).queryByText("Good coverage"),
+    ).not.toBeInTheDocument();
   });
 
   it("renders time in range circles at the top of the panel body when provided", () => {
@@ -166,7 +176,7 @@ describe("Dashboard CgmSummaryStats", () => {
         });
       });
     expect(within(panel).getByTestId("time-in-range-delta")).toHaveTextContent(
-      "+8%",
+      "Previous period: +8.0%",
     );
     expect(
       timeInRangeHeading.compareDocumentPosition(glucoseGroup) &

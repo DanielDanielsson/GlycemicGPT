@@ -21,18 +21,6 @@ const PERIOD_OPTIONS: { value: StatsPeriod; label: string }[] = [
   { value: "14d", label: "14D" },
   { value: "30d", label: "30D" },
 ];
-function getCvAssessment(cv: number): { label: string; color: string } {
-  if (cv <= 36) return { label: "Stable", color: "text-signal-check-text" };
-  if (cv <= 50) return { label: "Moderate", color: "text-signal-warning-text" };
-  return { label: "High variability", color: "text-signal-error-text" };
-}
-function getCgmActiveAssessment(pct: number): { label: string; color: string } {
-  if (pct >= 70)
-    return { label: "Good coverage", color: "text-signal-check-text" };
-  if (pct >= 50)
-    return { label: "Partial coverage", color: "text-signal-warning-text" };
-  return { label: "Low coverage", color: "text-signal-error-text" };
-}
 /** Check if a glucose value is within reasonable physiological range. */
 function isReasonableGlucose(value: number): boolean {
   return Number.isFinite(value) && value >= 20 && value <= 500;
@@ -149,27 +137,6 @@ function GlucoseMetricGroup({ metrics }: { metrics: GlucoseMetric[] }) {
     </div>
   );
 }
-function StatusDetail({
-  target,
-  status,
-  statusClassName,
-}: {
-  target: string;
-  status?: string;
-  statusClassName?: string;
-}) {
-  if (!status) {
-    return <span>{target}</span>;
-  }
-
-  return (
-    <>
-      <span>{target}</span>
-      <span aria-hidden="true"> | </span>
-      <span className={twMerge(statusClassName)}>{status}</span>
-    </>
-  );
-}
 export function CgmSummaryStats({
   className,
   stats,
@@ -187,14 +154,6 @@ export function CgmSummaryStats({
     !stats ||
     !Number.isFinite(stats.readings_count) ||
     stats.readings_count <= 0;
-  const cvAssessment =
-    stats && Number.isFinite(stats.cv_pct)
-      ? getCvAssessment(stats.cv_pct)
-      : null;
-  const cgmAssessment =
-    stats && Number.isFinite(stats.cgm_active_pct)
-      ? getCgmActiveAssessment(stats.cgm_active_pct)
-      : null;
   const buttonsRef = useRef<(HTMLButtonElement | null)[]>([]);
   const handlePeriodKeyDown = (e: KeyboardEvent, index: number) => {
     if (!onPeriodChange) {
@@ -378,14 +337,7 @@ export function CgmSummaryStats({
             }
             label="CV%"
             value={safePercent1(stats.cv_pct)}
-            detail={
-              <StatusDetail
-                status={cvAssessment?.label}
-                statusClassName={cvAssessment?.color}
-                target="Target <36%"
-              />
-            }
-            ariaLabel={`Coefficient of variation: ${safeFixed1(stats.cv_pct)} percent. ${cvAssessment?.label ?? ""}`}
+            ariaLabel={`Coefficient of variation: ${safeFixed1(stats.cv_pct)} percent`}
           />
           <StatRow
             className="border-b border-border-default sm:border-r"
@@ -412,14 +364,7 @@ export function CgmSummaryStats({
             }
             label="CGM Active"
             value={safePercent0(stats.cgm_active_pct)}
-            detail={
-              <StatusDetail
-                status={cgmAssessment?.label}
-                statusClassName={cgmAssessment?.color}
-                target="Target >70%"
-              />
-            }
-            ariaLabel={`CGM active time: ${safeRound(stats.cgm_active_pct)} percent. ${cgmAssessment?.label ?? ""}`}
+            ariaLabel={`CGM active time: ${safeRound(stats.cgm_active_pct)} percent`}
           />
         </div>
       )}
